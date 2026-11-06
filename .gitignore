@@ -1,0 +1,17 @@
+# Wails / Go build outputs
+build/bin/
+*.exe
+*.out
+*.test
+
+# Frontend dependencies & build outputs
+# Note: frontend/bun.lock and go.sum MUST remain tracked in Git.
+frontend/node_modules/
+frontend/dist/
+frontend/public/cmaps/
+frontend/public/standard_fonts/
+frontend/.svelte-kit/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
