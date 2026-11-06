@@ -1,5 +1,6 @@
 # Wails / Go build outputs
 build/bin/
+dist/
 *.exe
 *.out
 *.test
@@ -11,6 +12,7 @@ frontend/dist/
 frontend/public/cmaps/
 frontend/public/standard_fonts/
 frontend/.svelte-kit/
+frontend/*.md5
 
 # OS / Editor files
 .DS_Store
