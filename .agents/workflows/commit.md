@@ -10,7 +10,7 @@ description: コミットメッセージ生成（英語）
 Generate a clean Conventional Commits message from staged changes **in English**.
 
 > **Note:** This workflow reads git state but does NOT modify any files.
-> All commit rules are defined in `.agent/rules/git-commit-rules.md`.
+> All commit rules are defined in `.agents/rules/git-commit-rules.md`.
 
 ---
 
@@ -24,16 +24,16 @@ Generate a clean Conventional Commits message from staged changes **in English**
 ## 2. Classify Change Type
 - **Goal:** Determine the appropriate Conventional Commits type.
 - **Action:**
-  - Select the most accurate type: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`, `revert`.
-  - **IF changes span multiple types:** Propose splitting into separate commits before generating.
+  - Select the most appropriate type: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`, `revert`.
+  - Group related changes into a single cohesive commit based on the primary purpose.
 
 ## 3. Generate Commit Message
 - **Goal:** Produce a ready-to-use commit message.
 - **Action:**
-  - Follow all rules in `.agent/rules/git-commit-rules.md`.
+  - Follow all rules in `.agents/rules/git-commit-rules.md`.
   - **Language:** English.
-  - **Description:** Imperative mood, present tense, capitalize first letter, max 50 chars, no trailing period.
-  - **Body (optional):** After a blank line, explain the reason and impact. Wrap at 72 chars.
+  - **Description:** Imperative mood, present tense, ~50 chars guideline, no trailing period.
+  - **Body (optional):** Explain the reason and impact when helpful.
 
 ---
 

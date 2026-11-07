@@ -10,7 +10,7 @@ description: コミットメッセージ生成（日本語）
 staged 変更から Conventional Commits 形式のコミットメッセージを**日本語**で生成する。
 
 > **注意:** このワークフローは git の状態を読み取りますが、ファイルの変更は行いません。
-> コミットルールは `.agent/rules/git-commit-rules.md` に定義されています。
+> コミットルールは `.agents/rules/git-commit-rules.md` に定義されています。
 
 ---
 
@@ -24,16 +24,16 @@ staged 変更から Conventional Commits 形式のコミットメッセージを
 ## 2. 変更タイプの分類
 - **目的:** Conventional Commits の適切な type を決定する。
 - **アクション:**
-  - 最も正確な type を選択: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`, `revert`
-  - **複数の type にまたがる場合:** コミットの分割を提案してからメッセージを生成する。
+  - 最も適切な type を選択: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`, `revert`
+  - 主たる変更内容に合わせて type を決定する（関連する一連の修正は1つのコミットにまとめて良い）。
 
 ## 3. コミットメッセージの生成
 - **目的:** そのまま使えるコミットメッセージを出力する。
 - **アクション:**
-  - `.agent/rules/git-commit-rules.md` のすべてのルールに従う。
+  - `.agents/rules/git-commit-rules.md` のルールに従う。
   - **言語:** 日本語（type は英語のまま）。
-  - **Description:** 自然な日本語、業務調（丁寧すぎず簡潔）、50文字以内。
-  - **Body（任意）:** 空行の後、変更の意図・影響を簡潔に記述。
+  - **Description:** 自然な日本語、業務調（丁寧すぎず簡潔）、目安として50文字程度。
+  - **Body（任意）:** 必要に応じて、変更の意図・影響を簡潔に記述。
 
 ---
 
