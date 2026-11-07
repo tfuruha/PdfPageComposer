@@ -7,15 +7,44 @@
 ## 主な機能
 
 - **複数PDFの読み込み・結合**: ファイル選択ダイアログおよびウィンドウへのドラッグ＆ドロップで複数のPDFファイルを読み込み可能
-- **指定位置へのPDF挿入**: 末尾への追加だけでなく、選択ページの前／後やカード間の「＋」ボタンから任意の位置に別PDFを差し込み可能
-- **ページサムネイル一覧 & 拡大プレビュー**: `pdfjs-dist` によるサムネイルグリッド表示と、ダブルクリック（または「🔍 確認」ボタン）による高解像度モーダルプレビュー（前後ページ移動・50%〜200%ズーム対応）
-- **直感的なページ編集**:
-  - ドラッグ＆ドロップによるページ順の入れ替え（単一・複数選択対応）
-  - 単一選択（Click）、個別追加選択（`Ctrl`/`Cmd`+Click）、範囲選択（`Shift`+Click）、全選択（`Ctrl`+`A`）
-  - 90度単位のページ回転（左90° / 右90°、プレビューおよび出力PDFの双方に反映）
-  - 不要ページの削除（`Delete` / `Backspace` キーまたは削除ボタン）
-  - 操作履歴の Undo / Redo（`Ctrl`+`Z` / `Ctrl`+`Y`、最大50ステップ）
-- **ロスレスPDF出力**: バックエンドの純Goライブラリ `pdfcpu` により、元のベクター品質を維持したまま結合・抽出・回転を行って単一PDFとして保存
+- **指定位置へのPDF挿入**: 末尾への追加だけでなく、選択ページの前／後への挿入ボタンやカード間の「＋」ボタンから任意の位置に別PDFを差し込み可能
+- **最大化されたサムネイル一覧 & ホバー操作**:
+  - タイル下部の常設ボタンを排除してサムネイル表示領域を最大化
+  - マウスホバー時のみ直感的な回転オーバーレイ（`⟲` / `⟳`）および拡大確認ボタンを表示
+  - サムネイル表示サイズは3段階（小 140px / 中 210px / 大 360px）で切り替え可能
+- **右上ホバールーペ機能**:
+  - 各カード右上のページ番号バッジにマウスホバーすると、右上領域（上位28%×右40%）を即座に2.5倍拡大するルーペポップアップを表示（図面やExcel作業書のヘッダー・ページ番号確認を高速化）
+- **視覚的サポート（色分け・警告）**:
+  - **由来ファイル別のカラーコード**: 読み込んだ元PDFごとに固有のアクセントカラーをヘッダーに付与し、ファイルの境界を一目で識別可能
+  - **ページ飛び・逆順警告**: 同一元PDFの連続箇所でページが抜けている（非連番）または逆順になっている場合、アンバー色の警告バッジ（⚠）を表示
+- **軽快・直感的なページ編集**:
+  - **ドラッグ＆ドロップ並び替え**: 画面上下端へのドラッグ時に自動スクロール対応
+  - **カット＆ペースト並び替え (`Ctrl+X` / `Ctrl+V`)**: 選択したページ群を切り取り、目的の位置の直後へワンタッチで一括移動（大量ページの移動も手軽）
+  - **柔軟な選択操作**: クリック選択、`Ctrl`+クリック個別追加、`Shift`+クリックおよび `Shift`+矢印キーによるエクスプローラー風の連続範囲選択、`Ctrl+A` 全選択
+  - **キーボードファースト**: 矢印キー（`←` / `→`）による遅延のないページ送り、`Space` でのプレビュー開閉、`R` / `Shift+R` による90度回転、`Delete` による削除
+  - **操作履歴の Undo / Redo**: 最大50ステップの取り消し・やり直し（`Ctrl+Z` / `Ctrl+Y`）
+- **高解像度プレビューモーダル**:
+  - 前後ページ移動、50%〜200%ズーム、モーダル内での回転・削除に対応
+- **ロスレスPDF出力**: バックエンドの純Goライブラリ `pdfcpu` により、元のベクター品質・解像度を維持したまま結合・抽出・回転を行って単一PDFとして保存
+
+---
+
+## ショートカットキー一覧
+
+| キー | 動作 |
+| :--- | :--- |
+| `←` / `→` | 選択ページを前後に移動（フォーカス移動） |
+| `Shift + ←` / `→` | 選択範囲を前後に拡張 / 縮小 |
+| `Ctrl + X` | 選択したページを切り取り（半透明表示） |
+| `Ctrl + V` | 切り取ったページを選択位置の後に貼り付け（移動） |
+| `Space` | 選択ページの拡大プレビューを開く / 閉じる |
+| `R` | 選択ページを時計回りに90°回転 |
+| `Shift + R` / `L` | 選択ページを反時計回りに90°回転 |
+| `Delete` / `Backspace` | 選択したページを削除 |
+| `Ctrl + A` | すべてのページを選択 |
+| `Ctrl + Z` | 直前の操作を元に戻す (Undo) |
+| `Ctrl + Y` / `Ctrl + Shift + Z` | 元に戻した操作をやり直す (Redo) |
+| `Esc` | 切り取り状態の解除 / プレビューモーダルを閉じる |
 
 ---
 
@@ -63,12 +92,13 @@ GOOS=windows GOARCH=amd64 go build -tags desktop,production -ldflags "-w -s -H w
 
 ## ドキュメント体系
 
-- [AGENTS.md](file:///home/ftoy/Work/PdfPageComposer/AGENTS.md): 開発ガイドライン・Google Style Guide コーディング規約
-- [SpecSummary20261106.txt](file:///home/ftoy/Work/PdfPageComposer/SpecSummary20261106.txt): 最上位仕様概要書
-- [Plans_Works/implementation_plan.md](file:///home/ftoy/Work/PdfPageComposer/Plans_Works/implementation_plan.md): 実装計画書
-- [docs/architecture.md](file:///home/ftoy/Work/PdfPageComposer/docs/architecture.md): 全体アーキテクチャ設計仕様書
-- [docs/backend_pdf_service.md](file:///home/ftoy/Work/PdfPageComposer/docs/backend_pdf_service.md): バックエンド PDF合成サービス設計仕様書
-- [docs/frontend_ui_state.md](file:///home/ftoy/Work/PdfPageComposer/docs/frontend_ui_state.md): フロントエンド状態管理・UI設計仕様書
+- [docs/user_manual.md](docs/user_manual.md): ユーザー利用説明書・操作ガイド
+- [AGENTS.md](AGENTS.md): 開発ガイドライン・Google Style Guide コーディング規約
+- [SpecSummary20261106.txt](SpecSummary20261106.txt): 最上位仕様概要書
+- [Plans_Works/implementation_plan.md](Plans_Works/implementation_plan.md): 実装計画書
+- [docs/architecture.md](docs/architecture.md): 全体アーキテクチャ設計仕様書
+- [docs/backend_pdf_service.md](docs/backend_pdf_service.md): バックエンド PDF合成サービス設計仕様書
+- [docs/frontend_ui_state.md](docs/frontend_ui_state.md): フロントエンド状態管理・UI設計仕様書
 
 ---
 
@@ -77,3 +107,20 @@ GOOS=windows GOARCH=amd64 go build -tags desktop,production -ldflags "-w -s -H w
 - **Rules**: `basic_philosophy.md`, `git-commit-rules.md`, `indexing-codebase.md`, `language-strategies.md`, `senior-engineer-conduct.md`
 - **Skills**: `dep-version-management`, `indexing-awareness`, `knowledge-cutoff-awareness`
 - **Workflows**: `/ask`, `/commit`, `/commit-ja`, `/discard`, `/explain`, `/grasp`, `/review`
+
+---
+
+## ライセンス
+
+本プロジェクトは [Apache License 2.0](LICENSE) の下で公開されています。
+詳細は [LICENSE](LICENSE) および [NOTICE](NOTICE) をご参照ください。
+
+### サードパーティライセンス
+
+本プロジェクトは以下のオープンソースソフトウェアを利用しています。
+
+- [pdfcpu](https://github.com/pdfcpu/pdfcpu) - Apache License 2.0
+- [PDF.js (pdfjs-dist)](https://github.com/mozilla/pdf.js) - Apache License 2.0
+- [Wails](https://github.com/wailsapp/wails) - MIT License
+- [Svelte](https://github.com/sveltejs/svelte) - MIT License
+
