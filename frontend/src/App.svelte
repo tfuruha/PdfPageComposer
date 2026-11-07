@@ -6,25 +6,35 @@
     subscribeToFileDrop,
   } from './lib/backend/wailsBridge';
   import EmptyDropzone from './lib/components/EmptyDropzone.svelte';
+  import FileOrderModal from './lib/components/FileOrderModal.svelte';
   import PageGrid from './lib/components/PageGrid.svelte';
   import PreviewModal from './lib/components/PreviewModal.svelte';
   import Toolbar from './lib/components/Toolbar.svelte';
-  import {editorStore} from './lib/state/editorStore';
+  import {activeSourceList, editorStore} from './lib/state/editorStore';
   import type {SourcePDF} from './lib/types';
 
   let unsubscribeFileDrop: (() => void) | null = null;
+  let isFileOrderModalOpen = false;
+  let fileOrderModalMode: 'import' | 'reorder' = 'import';
+  let pendingImportSources: SourcePDF[] = [];
+  let pendingImportInsertIndex: number | undefined = undefined;
 
   async function handleSelectPDFs(insertIndex?: number): Promise<void> {
     editorStore.setBusy(true);
     editorStore.setNotice(null);
     try {
       const sources = await selectPDFsViaDialog();
-      if (sources.length > 0) {
+      if (sources.length === 1) {
         const addedCount = editorStore.addSourcePDFs(sources, insertIndex);
         editorStore.setNotice({
           type: 'info',
-          message: `${sources.length} ファイル（計 ${addedCount} ページ）を追加しました。`,
+          message: `1 ファイル（計 ${addedCount} ページ）を追加しました。`,
         });
+      } else if (sources.length > 1) {
+        pendingImportSources = sources;
+        pendingImportInsertIndex = insertIndex;
+        fileOrderModalMode = 'import';
+        isFileOrderModalOpen = true;
       }
     } catch (err: unknown) {
       editorStore.setNotice({
@@ -34,6 +44,36 @@
     } finally {
       editorStore.setBusy(false);
     }
+  }
+
+  function handleOpenFileOrder(): void {
+    fileOrderModalMode = 'reorder';
+    isFileOrderModalOpen = true;
+  }
+
+  function handleFileOrderConfirm(ordered: SourcePDF[]): void {
+    isFileOrderModalOpen = false;
+    if (fileOrderModalMode === 'import') {
+      const addedCount = editorStore.addSourcePDFs(ordered, pendingImportInsertIndex);
+      editorStore.setNotice({
+        type: 'info',
+        message: `${ordered.length} ファイル（計 ${addedCount} ページ）を追加しました。`,
+      });
+      pendingImportSources = [];
+      pendingImportInsertIndex = undefined;
+    } else {
+      editorStore.reorderPagesBySourceOrder(ordered.map((s) => s.id));
+      editorStore.setNotice({
+        type: 'info',
+        message: 'ファイル順に従ってページを再配置しました。',
+      });
+    }
+  }
+
+  function handleFileOrderCancel(): void {
+    isFileOrderModalOpen = false;
+    pendingImportSources = [];
+    pendingImportInsertIndex = undefined;
   }
 
   function handleInsertBeforeSelection(): void {
@@ -84,7 +124,7 @@
         target.tagName === 'TEXTAREA' ||
         target.tagName === 'SELECT' ||
         target.isContentEditable);
-    if (isInputFocused) {
+    if (isInputFocused || isFileOrderModalOpen) {
       return;
     }
 
@@ -200,15 +240,26 @@
 
     unsubscribeFileDrop = subscribeToFileDrop(
       (sources: SourcePDF[]) => {
+        if (sources.length === 0) {
+          return;
+        }
         const insertIdx =
           $editorStore.selectedIds.length > 0
             ? editorStore.getSelectionInsertionIndex('after')
             : undefined;
-        const addedCount = editorStore.addSourcePDFs(sources, insertIdx);
-        editorStore.setNotice({
-          type: 'info',
-          message: `ドロップされた ${sources.length} ファイル（計 ${addedCount} ページ）を追加しました。`,
-        });
+
+        if (sources.length === 1) {
+          const addedCount = editorStore.addSourcePDFs(sources, insertIdx);
+          editorStore.setNotice({
+            type: 'info',
+            message: `ドロップされた 1 ファイル（計 ${addedCount} ページ）を追加しました。`,
+          });
+        } else {
+          pendingImportSources = sources;
+          pendingImportInsertIndex = insertIdx;
+          fileOrderModalMode = 'import';
+          isFileOrderModalOpen = true;
+        }
       },
       (errMessage: string) => {
         editorStore.setNotice({
@@ -229,6 +280,7 @@
   <Toolbar
     onInsertPDFBefore={handleInsertBeforeSelection}
     onInsertPDFAfter={handleInsertAfterSelection}
+    onOpenFileOrder={handleOpenFileOrder}
     onExportPDF={handleExportPDF}
   />
 
@@ -277,6 +329,14 @@
   {/if}
 
   <PreviewModal />
+
+  <FileOrderModal
+    isOpen={isFileOrderModalOpen}
+    mode={fileOrderModalMode}
+    initialSources={fileOrderModalMode === 'import' ? pendingImportSources : $activeSourceList}
+    onConfirm={handleFileOrderConfirm}
+    onCancel={handleFileOrderCancel}
+  />
 </main>
 
 <style>

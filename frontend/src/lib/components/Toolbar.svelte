@@ -5,11 +5,13 @@
     editorStore,
     hasCutPages,
     hasSelection,
+    uniqueSourceCount,
   } from '../state/editorStore';
   import type {ThumbnailSize} from '../types';
 
   export let onInsertPDFBefore: () => void;
   export let onInsertPDFAfter: () => void;
+  export let onOpenFileOrder: () => void;
   export let onExportPDF: () => void;
 
   function handleSizeChange(event: Event): void {
@@ -53,6 +55,16 @@
       title="選択中のページの直後に別のPDFファイルを挿入します"
     >
       ⇥ 後に挿入
+    </button>
+
+    <button
+      type="button"
+      class="btn btn-outline"
+      on:click={onOpenFileOrder}
+      disabled={$editorStore.isBusy || $uniqueSourceCount < 2}
+      title="読み込まれているファイル全体の並び替え・ソートを行います"
+    >
+      📁 ファイル順
     </button>
   </div>
 

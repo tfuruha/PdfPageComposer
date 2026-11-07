@@ -398,6 +398,64 @@ export function createEditorStore() {
     });
   }
 
+  /**
+   * Reorders all pages in the workspace so that pages belonging to each sourceId
+   * are grouped together in the specified `orderedSourceIds` order, while preserving
+   * each page's internal relative order, originalPage, and rotation angle.
+   */
+  function reorderPagesBySourceOrder(orderedSourceIds: readonly string[]): void {
+    store.update((state) => {
+      if (state.pages.length <= 1 || orderedSourceIds.length <= 1) {
+        return state;
+      }
+
+      // Group pages by sourceId while preserving internal order
+      const groups = new Map<string, PageItem[]>();
+      for (const page of state.pages) {
+        const list = groups.get(page.sourceId);
+        if (list) {
+          list.push(page);
+        } else {
+          groups.set(page.sourceId, [page]);
+        }
+      }
+
+      const nextPages: PageItem[] = [];
+      const handledSources = new Set<string>();
+
+      for (const srcId of orderedSourceIds) {
+        const items = groups.get(srcId);
+        if (items) {
+          nextPages.push(...items);
+          handledSources.add(srcId);
+        }
+      }
+
+      // Append any pages from sources that were not explicitly listed
+      for (const [srcId, items] of groups.entries()) {
+        if (!handledSources.has(srcId)) {
+          nextPages.push(...items);
+        }
+      }
+
+      // Check whether the page order actually changed
+      const isUnchanged =
+        nextPages.length === state.pages.length &&
+        nextPages.every((p, idx) => p.id === state.pages[idx]?.id);
+
+      if (isUnchanged) {
+        return state;
+      }
+
+      return {
+        ...state,
+        pages: nextPages,
+        past: pushHistory(state.past, state.pages),
+        future: [],
+      };
+    });
+  }
+
   /** Rotates the specified pages (or currently selected pages if empty) by delta degrees (±90). */
   function rotatePages(pageIds: readonly string[], delta: 90 | -90): void {
     store.update((state) => {
@@ -608,6 +666,7 @@ export function createEditorStore() {
     selectAll,
     clearSelection,
     movePages,
+    reorderPagesBySourceOrder,
     cutSelection,
     pasteCutPages,
     cancelCut,
@@ -633,3 +692,20 @@ export const canUndo = derived(editorStore, ($state) => $state.past.length > 0);
 export const canRedo = derived(editorStore, ($state) => $state.future.length > 0);
 export const hasSelection = derived(editorStore, ($state) => $state.selectedIds.length > 0);
 export const hasCutPages = derived(editorStore, ($state) => $state.cutPageIds.length > 0);
+
+export const activeSourceList = derived(editorStore, ($state) => {
+  const seen = new Set<string>();
+  const list: SourcePDF[] = [];
+  for (const page of $state.pages) {
+    if (!seen.has(page.sourceId)) {
+      seen.add(page.sourceId);
+      const src = $state.sources[page.sourceId];
+      if (src) {
+        list.push(src);
+      }
+    }
+  }
+  return list;
+});
+
+export const uniqueSourceCount = derived(activeSourceList, ($sources) => $sources.length);

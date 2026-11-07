@@ -167,4 +167,58 @@ describe('editorStore', () => {
     expect(color1).toBe(color2);
     expect(color1).toMatch(/^#[0-9a-f]{6}$/i);
   });
+
+  it('reorders pages by source file order while preserving individual page rotations and internal sequence', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A, SAMPLE_PDF_B]);
+    // Initially: docA:1, docA:2, docA:3, docB:1, docB:2
+    expect(get(store).pages.map((p) => `${p.sourceName}:${p.originalPage}`)).toEqual([
+      'docA.pdf:1',
+      'docA.pdf:2',
+      'docA.pdf:3',
+      'docB.pdf:1',
+      'docB.pdf:2',
+    ]);
+
+    // Rotate docA page 2 by 90 degrees
+    const docAPage2 = get(store).pages[1];
+    store.rotatePages([docAPage2.id], 90);
+    expect(get(store).pages[1].rotation).toBe(90);
+
+    // Reorder so that SAMPLE_PDF_B (src_2) comes before SAMPLE_PDF_A (src_1)
+    store.reorderPagesBySourceOrder(['src_2', 'src_1']);
+
+    const reordered = get(store).pages;
+    expect(reordered.map((p) => `${p.sourceName}:${p.originalPage}`)).toEqual([
+      'docB.pdf:1',
+      'docB.pdf:2',
+      'docA.pdf:1',
+      'docA.pdf:2',
+      'docA.pdf:3',
+    ]);
+
+    // Verify docA page 2 retained its 90 degree rotation
+    expect(reordered[3].sourceName).toBe('docA.pdf');
+    expect(reordered[3].originalPage).toBe(2);
+    expect(reordered[3].rotation).toBe(90);
+
+    // Test Undo restores original order
+    store.undo();
+    expect(get(store).pages.map((p) => `${p.sourceName}:${p.originalPage}`)).toEqual([
+      'docA.pdf:1',
+      'docA.pdf:2',
+      'docA.pdf:3',
+      'docB.pdf:1',
+      'docB.pdf:2',
+    ]);
+
+    // Test Redo
+    store.redo();
+    expect(get(store).pages.map((p) => `${p.sourceName}:${p.originalPage}`)).toEqual([
+      'docB.pdf:1',
+      'docB.pdf:2',
+      'docA.pdf:1',
+      'docA.pdf:2',
+      'docA.pdf:3',
+    ]);
+  });
 });

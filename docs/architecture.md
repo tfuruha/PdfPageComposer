@@ -26,12 +26,16 @@ sequenceDiagram
     FE->>Wails: SelectPDFs() / RegisterPDFPaths(paths)
     Wails->>BE: PDF検証 & ページ数取得 (pdfcpu)
     BE-->>FE: []SourcePDF (id, fileName, pageCount)
+    opt 複数ファイル(2件以上)の場合
+        FE->>User: FileOrderModal (名前順ソート / 手動並び替え / 不要除外)
+        User-->>FE: 順序確定
+    end
     FE->>FE: editorStore に PageItem[] を生成・追加
     FE->>Wails: GET /local-pdf/{sourceId} (PDF.js)
     Wails->>BE: ServePDFFile(w, r, sourceId)
     BE-->>FE: PDF バイナリストリーム
     FE->>FE: Canvas にサムネイル / 拡大プレビュー描画
-    User->>FE: 並び替え・削除・回転・別PDF挿入 (Undo/Redo管理)
+    User->>FE: 並び替え・削除・回転・別PDF挿入・ファイル単位再配置 (Undo/Redo管理)
     User->>FE: 「PDFを出力」クリック
     FE->>Wails: ExportPDF(ExportRequest)
     Wails->>BE: 保存ダイアログ表示 & Compose() 実行
