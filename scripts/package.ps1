@@ -25,6 +25,8 @@ Write-Host "==========================================================" -Foregro
 # パス定義
 $ExePath = Join-Path $ProjectRoot "build\bin\PdfPageComposer.exe"
 $ManualPath = Join-Path $ProjectRoot "docs\user_manual.md"
+$LicensePath = Join-Path $ProjectRoot "LICENSE"
+$NoticePath = Join-Path $ProjectRoot "NOTICE"
 $DistDir = Join-Path $ProjectRoot "dist"
 $ZipName = "PdfPageComposer-windows-amd64-v$Version.zip"
 $ZipPath = Join-Path $DistDir $ZipName
@@ -74,6 +76,12 @@ Copy-Item $ExePath -Destination (Join-Path $PackageContentDir "PdfPageComposer.e
 # 配布先で一目で分かるよう「説明書.md」および「README.md」として配置
 Copy-Item $ManualPath -Destination (Join-Path $PackageContentDir "説明書.md")
 Copy-Item $ManualPath -Destination (Join-Path $PackageContentDir "README.md")
+if (Test-Path $LicensePath) {
+    Copy-Item $LicensePath -Destination (Join-Path $PackageContentDir "LICENSE")
+}
+if (Test-Path $NoticePath) {
+    Copy-Item $NoticePath -Destination (Join-Path $PackageContentDir "NOTICE")
+}
 
 # 4. Zip アーカイブ作成
 Write-Host "[4/4] Zip アーカイブを作成中: $ZipName..." -ForegroundColor Cyan

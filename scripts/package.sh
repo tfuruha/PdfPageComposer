@@ -43,6 +43,8 @@ cp "$BIN_PATH" "$TEMP_DIR/PdfPageComposer/PdfPageComposer"
 chmod +x "$TEMP_DIR/PdfPageComposer/PdfPageComposer"
 cp "$MANUAL_PATH" "$TEMP_DIR/PdfPageComposer/説明書.md"
 cp "$MANUAL_PATH" "$TEMP_DIR/PdfPageComposer/README.md"
+[ -f "$PROJECT_ROOT/LICENSE" ] && cp "$PROJECT_ROOT/LICENSE" "$TEMP_DIR/PdfPageComposer/LICENSE"
+[ -f "$PROJECT_ROOT/NOTICE" ] && cp "$PROJECT_ROOT/NOTICE" "$TEMP_DIR/PdfPageComposer/NOTICE"
 
 echo "[4/4] アーカイブを作成中: $ARCHIVE_NAME..."
 tar -czf "$DIST_DIR/$ARCHIVE_NAME" -C "$TEMP_DIR" PdfPageComposer

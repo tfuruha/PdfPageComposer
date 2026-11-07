@@ -9,6 +9,7 @@
   import FileOrderModal from './lib/components/FileOrderModal.svelte';
   import PageGrid from './lib/components/PageGrid.svelte';
   import PreviewModal from './lib/components/PreviewModal.svelte';
+  import AboutModal from './lib/components/AboutModal.svelte';
   import Toolbar from './lib/components/Toolbar.svelte';
   import {clearPDFDocumentCache} from './lib/pdf/pdfRenderer';
   import {activeSourceList, editorStore} from './lib/state/editorStore';
@@ -16,6 +17,7 @@
 
   let unsubscribeFileDrop: (() => void) | null = null;
   let isFileOrderModalOpen = false;
+  let isAboutModalOpen = false;
   let fileOrderModalMode: 'import' | 'reorder' = 'import';
   let pendingImportSources: SourcePDF[] = [];
   let pendingImportInsertIndex: number | undefined = undefined;
@@ -65,6 +67,10 @@
   function handleOpenFileOrder(): void {
     fileOrderModalMode = 'reorder';
     isFileOrderModalOpen = true;
+  }
+
+  function handleOpenAbout(): void {
+    isAboutModalOpen = true;
   }
 
   function handleFileOrderConfirm(ordered: SourcePDF[]): void {
@@ -293,6 +299,7 @@
     onInsertPDFAfter={handleInsertAfterSelection}
     onOpenFileOrder={handleOpenFileOrder}
     onExportPDF={handleExportPDF}
+    onOpenAbout={handleOpenAbout}
   />
 
   {#if $editorStore.notice}
@@ -347,6 +354,11 @@
     initialSources={fileOrderModalMode === 'import' ? pendingImportSources : $activeSourceList}
     onConfirm={handleFileOrderConfirm}
     onCancel={handleFileOrderCancel}
+  />
+
+  <AboutModal
+    isOpen={isAboutModalOpen}
+    onClose={() => (isAboutModalOpen = false)}
   />
 </main>
 

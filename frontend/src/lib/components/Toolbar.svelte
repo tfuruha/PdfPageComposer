@@ -13,6 +13,7 @@
   export let onInsertPDFAfter: () => void;
   export let onOpenFileOrder: () => void;
   export let onExportPDF: () => void;
+  export let onOpenAbout: () => void;
 
   function handleSizeChange(event: Event): void {
     const select = event.currentTarget as HTMLSelectElement;
@@ -163,6 +164,22 @@
     >
       PDFを出力
     </button>
+
+    <button
+      type="button"
+      class="btn btn-icon btn-about"
+      on:click={onOpenAbout}
+      title="アプリ情報とライセンス (About)"
+      aria-label="アプリ情報とライセンス"
+    >
+      <svg class="about-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path
+          fill-rule="evenodd"
+          d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
+          clip-rule="evenodd"
+        />
+      </svg>
+    </button>
   </div>
 </header>
 
@@ -244,5 +261,23 @@
     background: var(--surface-bg);
     color: var(--text-primary);
     font-size: 0.82rem;
+  }
+
+  .btn-about {
+    padding: 0.35rem 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+  }
+
+  .btn-about:hover {
+    color: var(--text-primary);
+  }
+
+  .about-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    display: block;
   }
 </style>
