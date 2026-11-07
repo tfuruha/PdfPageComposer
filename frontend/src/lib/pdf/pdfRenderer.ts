@@ -52,6 +52,7 @@ export interface RenderPageOptions {
   readonly pageNumber: number;
   readonly rotation: RotationAngle;
   readonly targetWidth: number;
+  readonly targetHeight?: number;
 }
 
 /**
@@ -60,7 +61,7 @@ export interface RenderPageOptions {
  * render() conflicts on the same HTMLCanvasElement.
  */
 export async function renderPageToCanvas(options: RenderPageOptions): Promise<void> {
-  const {canvas, sourceId, pageNumber, rotation, targetWidth} = options;
+  const {canvas, sourceId, pageNumber, rotation, targetWidth, targetHeight} = options;
   const seq = (canvasRenderSeq.get(canvas) ?? 0) + 1;
   canvasRenderSeq.set(canvas, seq);
 
@@ -78,7 +79,11 @@ export async function renderPageToCanvas(options: RenderPageOptions): Promise<vo
   const unscaledViewport = page.getViewport({scale: 1, rotation: baseRotation});
 
   const devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const scale = (targetWidth / Math.max(1, unscaledViewport.width)) * devicePixelRatio;
+  let scale = (targetWidth / Math.max(1, unscaledViewport.width)) * devicePixelRatio;
+  if (targetHeight && targetHeight > 0) {
+    const scaleY = (targetHeight / Math.max(1, unscaledViewport.height)) * devicePixelRatio;
+    scale = Math.min(scale, scaleY);
+  }
   const viewport = page.getViewport({scale, rotation: baseRotation});
 
   const pixelWidth = Math.max(1, Math.floor(viewport.width));

@@ -6,7 +6,7 @@
 import {get} from 'svelte/store';
 import {beforeEach, describe, expect, it} from 'vitest';
 import {createEditorStore} from './editorStore';
-import type {SourcePDF} from '../types';
+import {getSourceAccentColor, type SourcePDF} from '../types';
 
 const SAMPLE_PDF_A: SourcePDF = {
   id: 'src_1',
@@ -108,5 +108,63 @@ describe('editorStore', () => {
 
     store.redo();
     expect(get(store).pages.map((p) => p.originalPage)).toEqual([1, 3]);
+  });
+
+  it('navigates and extends selection to adjacent pages', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A]);
+    const pages = get(store).pages;
+
+    // Initially select page 0
+    store.selectPage(pages[0].id, 'single');
+    expect(get(store).selectedIds).toEqual([pages[0].id]);
+
+    // Move to next page (page 1)
+    store.selectAdjacentPage(1);
+    expect(get(store).selectedIds).toEqual([pages[1].id]);
+
+    // Move to previous page (page 0)
+    store.selectAdjacentPage(-1);
+    expect(get(store).selectedIds).toEqual([pages[0].id]);
+
+    // At start, cannot move previous further
+    store.selectAdjacentPage(-1);
+    expect(get(store).selectedIds).toEqual([pages[0].id]);
+
+    // Extend selection to next page (pages 0 and 1)
+    store.selectAdjacentPage(1, true);
+    expect(get(store).selectedIds).toEqual([pages[0].id, pages[1].id]);
+
+    // Extend selection further to page 2 (pages 0, 1, 2)
+    store.selectAdjacentPage(1, true);
+    expect(get(store).selectedIds).toEqual([pages[0].id, pages[1].id, pages[2].id]);
+
+    // Shrink selection back towards anchor by pressing left (pages 0 and 1)
+    store.selectAdjacentPage(-1, true);
+    expect(get(store).selectedIds).toEqual([pages[0].id, pages[1].id]);
+  });
+
+  it('supports cutting and pasting pages to reorder them via clipboard buffer', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A]);
+    const pages = get(store).pages;
+
+    // Select page 0 (originalPage 1) and cut
+    store.selectPage(pages[0].id, 'single');
+    store.cutSelection();
+    expect(get(store).cutPageIds).toEqual([pages[0].id]);
+
+    // Select page 2 (originalPage 3) and paste (should insert after page 2)
+    store.selectPage(pages[2].id, 'single');
+    store.pasteCutPages();
+
+    expect(get(store).cutPageIds).toEqual([]);
+    const updated = get(store).pages;
+    expect(updated.map((p) => p.originalPage)).toEqual([2, 3, 1]);
+  });
+
+  it('determines deterministic accent colors for source IDs', () => {
+    const color1 = getSourceAccentColor('src_1');
+    const color2 = getSourceAccentColor('src_1');
+    expect(color1).toBe(color2);
+    expect(color1).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });

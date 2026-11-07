@@ -1,8 +1,13 @@
 <script lang="ts">
-  import {canRedo, canUndo, editorStore, hasSelection} from '../state/editorStore';
+  import {
+    canRedo,
+    canUndo,
+    editorStore,
+    hasCutPages,
+    hasSelection,
+  } from '../state/editorStore';
   import type {ThumbnailSize} from '../types';
 
-  export let onAddPDFEnd: () => void;
   export let onInsertPDFBefore: () => void;
   export let onInsertPDFAfter: () => void;
   export let onExportPDF: () => void;
@@ -21,20 +26,15 @@
       {#if $editorStore.selectedIds.length > 0}
         <span class="selected-badge">（{$editorStore.selectedIds.length} 選択中）</span>
       {/if}
+      {#if $hasCutPages}
+        <span class="cut-badge" title="Ctrl+V で選択位置の後に貼り付けます">
+          ✂ {$editorStore.cutPageIds.length} カット中
+        </span>
+      {/if}
     </span>
   </div>
 
   <div class="toolbar-group">
-    <button
-      type="button"
-      class="btn btn-secondary"
-      on:click={onAddPDFEnd}
-      disabled={$editorStore.isBusy}
-      title="PDFファイルを選択して末尾に追加します"
-    >
-      ＋ PDFを追加
-    </button>
-
     <button
       type="button"
       class="btn btn-outline"
@@ -42,7 +42,7 @@
       disabled={$editorStore.isBusy || !$hasSelection}
       title="選択中のページの直前に別のPDFファイルを挿入します"
     >
-      ⇤ 選択前に挿入
+      ⇤ 前に挿入
     </button>
 
     <button
@@ -52,7 +52,30 @@
       disabled={$editorStore.isBusy || !$hasSelection}
       title="選択中のページの直後に別のPDFファイルを挿入します"
     >
-      ⇥ 選択後に挿入
+      ⇥ 後に挿入
+    </button>
+  </div>
+
+  <div class="toolbar-group">
+    <button
+      type="button"
+      class="btn btn-icon"
+      on:click={() => editorStore.cutSelection()}
+      disabled={$editorStore.isBusy || !$hasSelection}
+      title="選択ページを切り取り (Ctrl+X)"
+      aria-label="切り取り"
+    >
+      ✂ 切り取り
+    </button>
+    <button
+      type="button"
+      class="btn btn-icon"
+      on:click={() => editorStore.pasteCutPages()}
+      disabled={$editorStore.isBusy || !$hasCutPages}
+      title="カットしたページを現在の選択位置の後へ貼り付け (Ctrl+V)"
+      aria-label="貼り付け"
+    >
+      📋 貼り付け
     </button>
   </div>
 
@@ -85,7 +108,7 @@
       class="btn btn-icon"
       on:click={() => editorStore.rotatePages([], -90)}
       disabled={$editorStore.isBusy || !$hasSelection}
-      title="選択ページを左に90度回転"
+      title="選択ページを左に90度回転 (Shift+R / L)"
     >
       ⟲ 左90°
     </button>
@@ -94,7 +117,7 @@
       class="btn btn-icon"
       on:click={() => editorStore.rotatePages([], 90)}
       disabled={$editorStore.isBusy || !$hasSelection}
-      title="選択ページを右に90度回転"
+      title="選択ページを右に90度回転 (R)"
     >
       ⟳ 右90°
     </button>
@@ -105,7 +128,7 @@
       disabled={$editorStore.isBusy || !$hasSelection}
       title="選択ページを削除 (Delete)"
     >
-      🗑 削除
+      🗑 削除{#if $editorStore.selectedIds.length > 0} ({$editorStore.selectedIds.length}){/if}
     </button>
   </div>
 
@@ -182,6 +205,15 @@
 
   .selected-badge {
     color: var(--accent-color);
+    font-weight: 600;
+  }
+
+  .cut-badge {
+    margin-left: 0.35rem;
+    color: #b45309;
+    background: #fef3c7;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
     font-weight: 600;
   }
 

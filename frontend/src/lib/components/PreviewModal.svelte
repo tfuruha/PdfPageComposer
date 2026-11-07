@@ -4,6 +4,8 @@
   import {editorStore} from '../state/editorStore';
   import type {PageItem} from '../types';
 
+  import {getSourceAccentColor} from '../types';
+
   let canvasElement: HTMLCanvasElement | null = null;
   let zoomPercent = 100;
   let isRendering = false;
@@ -13,6 +15,7 @@
   $: currentPage = (currentIndex >= 0 ? $editorStore.pages[currentIndex] : null) as PageItem | null;
   $: hasPrev = currentIndex > 0;
   $: hasNext = currentIndex >= 0 && currentIndex < $editorStore.pages.length - 1;
+  $: accentColor = currentPage ? getSourceAccentColor(currentPage.sourceId) : '#2563eb';
 
   $: if (canvasElement && currentPage && zoomPercent) {
     void drawModalPreview(currentPage, zoomPercent);
@@ -25,7 +28,7 @@
     isRendering = true;
     renderError = null;
     try {
-      const baseWidth = Math.round((640 * zoom) / 100);
+      const baseWidth = Math.round((720 * zoom) / 100);
       await renderPageToCanvas({
         canvas: canvasElement,
         sourceId: page.sourceId,
@@ -56,15 +59,43 @@
     if (!currentPage) {
       return;
     }
-    if (event.key === 'Escape') {
+
+    const isCtrlOrMeta = event.ctrlKey || event.metaKey;
+
+    if (event.key === 'Escape' || event.key === ' ') {
       event.preventDefault();
       editorStore.closePreview();
-    } else if (event.key === 'ArrowLeft') {
+      return;
+    }
+
+    if (event.key === 'ArrowLeft') {
       event.preventDefault();
       goPrev();
-    } else if (event.key === 'ArrowRight') {
+      return;
+    }
+
+    if (event.key === 'ArrowRight') {
       event.preventDefault();
       goNext();
+      return;
+    }
+
+    if (event.key.toLowerCase() === 'r' && !isCtrlOrMeta) {
+      event.preventDefault();
+      editorStore.rotatePages([currentPage.id], event.shiftKey ? -90 : 90);
+      return;
+    }
+
+    if (event.key.toLowerCase() === 'l' && !isCtrlOrMeta) {
+      event.preventDefault();
+      editorStore.rotatePages([currentPage.id], -90);
+      return;
+    }
+
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      editorStore.deletePages([currentPage.id]);
+      return;
     }
   }
 
@@ -84,13 +115,16 @@
     <div class="modal-dialog" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1">
       <header class="modal-header">
         <div class="modal-title">
-          <strong>ページ #{currentIndex + 1} / {$editorStore.pages.length}</strong>
-          <span class="modal-subtitle">
-            元ファイル: {currentPage.sourceName} (p.{currentPage.originalPage})
+          <div class="title-top">
+            <span class="seq-badge">結合後 #{currentIndex + 1} / {$editorStore.pages.length}</span>
+            <span class="source-tag">
+              <span class="source-color-dot" style={`background-color: ${accentColor}`}></span>
+              {currentPage.sourceName} <strong class="orig-p">p.{currentPage.originalPage}</strong>
+            </span>
             {#if currentPage.rotation !== 0}
-              ・回転 {currentPage.rotation}°
+              <span class="rotation-pill">回転 {currentPage.rotation}°</span>
             {/if}
-          </span>
+          </div>
         </div>
 
         <div class="modal-controls">
@@ -139,7 +173,7 @@
             type="button"
             class="btn btn-icon"
             on:click={() => editorStore.rotatePages([currentPage.id], -90)}
-            title="左に90度回転"
+            title="左に90度回転 (Shift+R / L)"
           >
             ⟲ 左90°
           </button>
@@ -147,7 +181,7 @@
             type="button"
             class="btn btn-icon"
             on:click={() => editorStore.rotatePages([currentPage.id], 90)}
-            title="右に90度回転"
+            title="右に90度回転 (R)"
           >
             ⟳ 右90°
           </button>
@@ -155,7 +189,7 @@
             type="button"
             class="btn btn-danger-outline"
             on:click={() => editorStore.deletePages([currentPage.id])}
-            title="このページを削除"
+            title="このページを削除 (Delete)"
           >
             🗑 削除
           </button>
@@ -164,7 +198,7 @@
             type="button"
             class="btn btn-secondary"
             on:click={() => editorStore.closePreview()}
-            title="閉じる (Esc)"
+            title="閉じる (Esc または Space)"
           >
             閉じる ✕
           </button>
@@ -219,13 +253,55 @@
 
   .modal-title {
     display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
+    align-items: center;
   }
 
-  .modal-subtitle {
-    font-size: 0.78rem;
+  .title-top {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .seq-badge {
+    font-weight: 700;
+    font-size: 0.92rem;
+    color: var(--text-primary);
+    background: var(--subtle-bg);
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+  }
+
+  .source-tag {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
     color: var(--text-secondary);
+    background: #f1f5f9;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+  }
+
+  .source-color-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  .orig-p {
+    color: var(--text-primary);
+  }
+
+  .rotation-pill {
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(15, 23, 42, 0.8);
+    color: #ffffff;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
   }
 
   .modal-controls {

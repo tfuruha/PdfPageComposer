@@ -43,3 +43,24 @@ export interface StatusNotice {
   readonly type: 'info' | 'success' | 'error';
   readonly message: string;
 }
+
+/** Distinct theme colors assigned to source PDF files for visual boundary grouping. */
+export const SOURCE_PALETTE: readonly string[] = [
+  '#2563eb', // Blue
+  '#059669', // Emerald
+  '#d97706', // Amber
+  '#7c3aed', // Violet
+  '#0891b2', // Cyan
+  '#db2777', // Pink
+  '#ea580c', // Orange
+  '#4f46e5', // Indigo
+];
+
+/** Deterministically returns an accent color string from the palette for a given source ID. */
+export function getSourceAccentColor(sourceId: string): string {
+  let hash = 0;
+  for (let i = 0; i < sourceId.length; i += 1) {
+    hash = (hash * 31 + sourceId.charCodeAt(i)) >>> 0;
+  }
+  return SOURCE_PALETTE[hash % SOURCE_PALETTE.length];
+}

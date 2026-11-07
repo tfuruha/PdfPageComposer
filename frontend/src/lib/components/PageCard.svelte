@@ -6,31 +6,44 @@
   export let page: PageItem;
   export let outputPageNumber: number;
   export let isSelected: boolean;
+  export let isCut: boolean = false;
+  export let isFocused: boolean = false;
   export let thumbnailSize: ThumbnailSize;
+  export let sourceAccentColor: string = '#2563eb';
+  export let isDiscontinuous: boolean = false;
+  export let prevPageNumber: number | null = null;
   export let onSelect: (id: string, mode: SelectionMode) => void;
   export let onPreview: (id: string) => void;
   export let onRotate: (id: string, delta: 90 | -90) => void;
-  export let onDelete: (id: string) => void;
   export let onDragStartCard: (event: DragEvent, id: string) => void;
 
   let cardElement: HTMLElement | null = null;
   let canvasElement: HTMLCanvasElement | null = null;
+  let loupeCanvas: HTMLCanvasElement | null = null;
   let isVisible = false;
   let isRendering = false;
   let renderError: string | null = null;
   let observer: IntersectionObserver | null = null;
+  let showLoupe = false;
+  let lastRenderKey = '';
 
   const SIZE_TO_WIDTH: Record<ThumbnailSize, number> = {
-    small: 130,
-    medium: 180,
-    large: 240,
+    small: 140,
+    medium: 210,
+    large: 360,
   };
 
   $: targetWidth = SIZE_TO_WIDTH[thumbnailSize];
+  $: targetHeight = Math.round(targetWidth * 1.35);
+
+  // Auto-scroll when keyboard navigation lands on this card
+  $: if (isFocused && cardElement) {
+    cardElement.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  }
 
   // Re-render whenever visibility, source page, rotation, or thumbnail size changes
   $: if (isVisible && canvasElement && page && targetWidth) {
-    void drawThumbnail(page.sourceId, page.originalPage, page.rotation, targetWidth);
+    void drawThumbnail(page.sourceId, page.originalPage, page.rotation, targetWidth, targetHeight);
   }
 
   async function drawThumbnail(
@@ -38,10 +51,16 @@
     pageNumber: number,
     rotation: PageItem['rotation'],
     width: number,
+    height: number,
   ): Promise<void> {
     if (!canvasElement) {
       return;
     }
+    const renderKey = `${sourceId}:${pageNumber}:${rotation}:${width}:${height}`;
+    if (renderKey === lastRenderKey) {
+      return;
+    }
+    lastRenderKey = renderKey;
     isRendering = true;
     renderError = null;
     try {
@@ -51,12 +70,52 @@
         pageNumber,
         rotation,
         targetWidth: width,
+        targetHeight: height,
       });
+      if (showLoupe) {
+        updateLoupe();
+      }
     } catch (err: unknown) {
       renderError = err instanceof Error ? err.message : '描画エラー';
     } finally {
       isRendering = false;
     }
+  }
+
+  function updateLoupe(): void {
+    if (!canvasElement || !loupeCanvas) {
+      return;
+    }
+    const sWidth = canvasElement.width * 0.40;
+    const sHeight = canvasElement.height * 0.28;
+    const sx = canvasElement.width - sWidth;
+    const sy = 0;
+
+    loupeCanvas.width = 240;
+    loupeCanvas.height = 160;
+    const ctx = loupeCanvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, loupeCanvas.width, loupeCanvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(
+      canvasElement,
+      Math.max(0, sx),
+      sy,
+      sWidth,
+      sHeight,
+      0,
+      0,
+      loupeCanvas.width,
+      loupeCanvas.height,
+    );
+  }
+
+  $: if (showLoupe && loupeCanvas && canvasElement) {
+    updateLoupe();
   }
 
   function handleCardClick(event: MouseEvent): void {
@@ -104,6 +163,7 @@
   bind:this={cardElement}
   class="page-card"
   class:selected={isSelected}
+  class:is-cut={isCut}
   draggable="true"
   role="button"
   tabindex="0"
@@ -114,13 +174,47 @@
   on:dragstart={(e) => onDragStartCard(e, page.id)}
 >
   <div class="card-header">
-    <span class="output-page-number">#{outputPageNumber}</span>
-    <span class="source-badge" title={`${page.sourceName} (元ページ: p.${page.originalPage})`}>
-      {page.sourceName} <small>p.{page.originalPage}</small>
-    </span>
+    <div class="header-left">
+      <span class="source-color-indicator" style={`background-color: ${sourceAccentColor}`}></span>
+      <span class="output-page-number">#{outputPageNumber}</span>
+      <span class="source-filename" title={page.sourceName}>
+        {page.sourceName}
+      </span>
+    </div>
+
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div
+      class="header-right"
+      on:mouseenter={() => (showLoupe = true)}
+      on:mouseleave={() => (showLoupe = false)}
+    >
+      <span
+        class="orig-page-badge"
+        class:discontinuous={isDiscontinuous}
+        title={isDiscontinuous
+          ? `元PDFのページ連番が飛んでいます (前: p.${prevPageNumber ?? '?'} → 現在: p.${page.originalPage})`
+          : `元PDFのページ番号: p.${page.originalPage} (ホバーで右上拡大)`}
+      >
+        {#if isDiscontinuous}
+          <span class="warning-icon">⚠</span>
+        {/if}
+        p.{page.originalPage}
+      </span>
+      <button
+        type="button"
+        class="loupe-hint-btn"
+        title="ページ右上の番号をルーペ拡大表示"
+        aria-label="ルーペ拡大"
+      >
+        🔍
+      </button>
+    </div>
   </div>
 
-  <div class="canvas-container" style={`min-height: ${Math.round(targetWidth * 1.32)}px`}>
+  <div
+    class="canvas-container"
+    style={`height: ${targetHeight}px`}
+  >
     <canvas bind:this={canvasElement} class="thumbnail-canvas"></canvas>
     {#if renderError}
       <div class="render-error" title={renderError}>
@@ -130,44 +224,48 @@
     {:else if isRendering}
       <div class="rendering-overlay">読込中...</div>
     {/if}
+
     {#if page.rotation !== 0}
       <span class="rotation-badge">{page.rotation}°</span>
     {/if}
-  </div>
 
-  <div class="card-actions" role="toolbar" tabindex="-1">
-    <button
-      type="button"
-      class="card-action-btn"
-      title="拡大プレビュー (ダブルクリック)"
-      on:click|stopPropagation={() => onPreview(page.id)}
-    >
-      🔍 確認
-    </button>
-    <button
-      type="button"
-      class="card-action-btn"
-      title="左へ90度回転"
-      on:click|stopPropagation={() => onRotate(page.id, -90)}
-    >
-      ⟲
-    </button>
-    <button
-      type="button"
-      class="card-action-btn"
-      title="右へ90度回転"
-      on:click|stopPropagation={() => onRotate(page.id, 90)}
-    >
-      ⟳
-    </button>
-    <button
-      type="button"
-      class="card-action-btn danger"
-      title="このページを削除"
-      on:click|stopPropagation={() => onDelete(page.id)}
-    >
-      ✕
-    </button>
+    <!-- Hover overlay controls: 1-click rotate and preview trigger -->
+    <div class="hover-overlay-bar" role="toolbar" tabindex="-1">
+      <button
+        type="button"
+        class="hover-btn"
+        title="このページを左に90度回転"
+        on:click|stopPropagation={() => onRotate(page.id, -90)}
+      >
+        ⟲
+      </button>
+      <button
+        type="button"
+        class="hover-btn preview-btn"
+        title="拡大プレビュー (ダブルクリックまたはSpace)"
+        on:click|stopPropagation={() => onPreview(page.id)}
+      >
+        拡大確認
+      </button>
+      <button
+        type="button"
+        class="hover-btn"
+        title="このページを右に90度回転"
+        on:click|stopPropagation={() => onRotate(page.id, 90)}
+      >
+        ⟳
+      </button>
+    </div>
+
+    <!-- Quick Loupe preview for upper-right page number -->
+    {#if showLoupe}
+      <div class="loupe-popup" role="tooltip">
+        <div class="loupe-title">
+          <span>右上コーナー拡大 (p.{page.originalPage})</span>
+        </div>
+        <canvas bind:this={loupeCanvas} class="loupe-canvas"></canvas>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -181,21 +279,34 @@
     padding: 0.55rem;
     cursor: grab;
     user-select: none;
-    transition:
-      border-color 0.15s ease,
-      box-shadow 0.15s ease,
-      transform 0.1s ease;
+    position: relative;
+    outline: none;
+    /* Instant visual feedback for keyboard navigation */
+    transition: none;
   }
 
   .page-card:hover {
     border-color: var(--border-strong);
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.09);
+  }
+
+  /* Remove persistent dashed focus outline on clicked cards */
+  .page-card:focus,
+  .page-card:focus-visible {
+    outline: none;
   }
 
   .page-card.selected {
     border-color: var(--accent-color);
     background: var(--selected-bg);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+  }
+
+  /* Dimmed appearance when page is marked for cut */
+  .page-card.is-cut {
+    opacity: 0.45;
+    border-style: dashed;
+    border-color: #d97706;
   }
 
   .card-header {
@@ -205,6 +316,21 @@
     gap: 0.4rem;
     margin-bottom: 0.45rem;
     font-size: 0.78rem;
+    min-height: 24px;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    overflow: hidden;
+  }
+
+  .source-color-indicator {
+    width: 6px;
+    height: 18px;
+    border-radius: 3px;
+    flex-shrink: 0;
   }
 
   .output-page-number {
@@ -214,6 +340,7 @@
     padding: 0.12rem 0.42rem;
     border-radius: 5px;
     flex-shrink: 0;
+    font-size: 0.78rem;
   }
 
   .page-card.selected .output-page-number {
@@ -221,17 +348,65 @@
     color: #ffffff;
   }
 
-  .source-badge {
+  .source-filename {
     color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.75rem;
+    font-size: 0.74rem;
   }
 
-  .source-badge small {
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex-shrink: 0;
+    cursor: zoom-in;
+  }
+
+  .orig-page-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    font-size: 0.74rem;
     font-weight: 600;
     color: var(--text-primary);
+    background: var(--subtle-bg);
+    padding: 0.12rem 0.38rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .orig-page-badge:hover {
+    background: #e2e8f0;
+    border-color: var(--border-strong);
+  }
+
+  .orig-page-badge.discontinuous {
+    background: #fef3c7;
+    color: #b45309;
+    border-color: #f59e0b;
+    font-weight: 700;
+  }
+
+  .warning-icon {
+    font-size: 0.72rem;
+    line-height: 1;
+  }
+
+  .loupe-hint-btn {
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 0.75rem;
+    cursor: zoom-in;
+    opacity: 0.6;
+    transition: opacity 0.15s ease;
+  }
+
+  .header-right:hover .loupe-hint-btn {
+    opacity: 1;
   }
 
   .canvas-container {
@@ -248,7 +423,8 @@
   .thumbnail-canvas {
     display: block;
     max-width: 100%;
-    height: auto;
+    max-height: 100%;
+    object-fit: contain;
     box-shadow: 0 1px 4px rgba(15, 23, 42, 0.14);
     background: #ffffff;
   }
@@ -281,39 +457,88 @@
     font-weight: 600;
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
+    z-index: 2;
   }
 
-  .card-actions {
+  .hover-overlay-bar {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.25rem;
-    margin-top: 0.5rem;
-    padding-top: 0.4rem;
-    border-top: 1px solid var(--border-color);
+    gap: 0.35rem;
+    background: rgba(15, 23, 42, 0.85);
+    padding: 0.25rem 0.45rem;
+    border-radius: 999px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+    z-index: 4;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   }
 
-  .card-action-btn {
-    flex: 1;
-    padding: 0.22rem 0.35rem;
-    font-size: 0.75rem;
-    border: 1px solid transparent;
-    border-radius: 5px;
-    background: var(--subtle-bg);
-    color: var(--text-primary);
+  .page-card:hover .hover-overlay-bar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .hover-btn {
+    border: none;
+    background: transparent;
+    color: #ffffff;
+    font-size: 0.82rem;
+    line-height: 1;
+    padding: 0.2rem 0.45rem;
+    border-radius: 999px;
     cursor: pointer;
     transition: background 0.12s ease;
   }
 
-  .card-action-btn:hover {
-    background: var(--border-color);
+  .hover-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
   }
 
-  .card-action-btn.danger {
-    color: var(--danger-color);
+  .hover-btn.preview-btn {
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 0.2rem 0.55rem;
+    background: var(--accent-color);
   }
 
-  .card-action-btn.danger:hover {
-    background: #fee2e2;
+  .hover-btn.preview-btn:hover {
+    background: #1d4ed8;
+  }
+
+  .loupe-popup {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #ffffff;
+    border: 2px solid var(--accent-color);
+    border-radius: 8px;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.3);
+    z-index: 30;
+    padding: 0.4rem;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .loupe-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--accent-color);
+    text-align: center;
+  }
+
+  .loupe-canvas {
+    display: block;
+    width: 240px;
+    height: 160px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
   }
 </style>

@@ -76,7 +76,18 @@
   }
 
   function handleGlobalKeyDown(event: KeyboardEvent): void {
-    // Ignore shortcuts if modal is open and handling its own navigation
+    // Avoid interfering when user is typing in form inputs or dialogs
+    const target = event.target as HTMLElement | null;
+    const isInputFocused =
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable);
+    if (isInputFocused) {
+      return;
+    }
+
     const isModalOpen = $editorStore.previewPageId !== null;
     const isCtrlOrMeta = event.ctrlKey || event.metaKey;
 
@@ -102,11 +113,85 @@
       return;
     }
 
+    if (isCtrlOrMeta && event.key.toLowerCase() === 'x' && !isModalOpen) {
+      if ($editorStore.selectedIds.length > 0) {
+        event.preventDefault();
+        editorStore.cutSelection();
+      }
+      return;
+    }
+
+    if (isCtrlOrMeta && event.key.toLowerCase() === 'v' && !isModalOpen) {
+      if ($editorStore.cutPageIds.length > 0) {
+        event.preventDefault();
+        editorStore.pasteCutPages();
+      }
+      return;
+    }
+
+    if (event.key === 'Escape' && !isModalOpen) {
+      if ($editorStore.cutPageIds.length > 0) {
+        event.preventDefault();
+        editorStore.cancelCut();
+      }
+      return;
+    }
+
     if ((event.key === 'Delete' || event.key === 'Backspace') && !isModalOpen) {
       if ($editorStore.selectedIds.length > 0) {
         event.preventDefault();
         editorStore.deletePages();
       }
+      return;
+    }
+
+    // Modal is open: leave page flipping/closing to PreviewModal
+    if (isModalOpen) {
+      return;
+    }
+
+    // Space: Toggle preview on selected page
+    if (event.key === ' ') {
+      if ($editorStore.pages.length > 0) {
+        event.preventDefault();
+        const targetId =
+          $editorStore.lastSelectedId ??
+          $editorStore.selectedIds[0] ??
+          $editorStore.pages[0].id;
+        editorStore.openPreview(targetId);
+      }
+      return;
+    }
+
+    // R / Shift+R: Rotate right (clockwise) or left (counter-clockwise)
+    if (event.key.toLowerCase() === 'r' && !isCtrlOrMeta) {
+      if ($editorStore.selectedIds.length > 0) {
+        event.preventDefault();
+        editorStore.rotatePages([], event.shiftKey ? -90 : 90);
+      }
+      return;
+    }
+
+    // L: Left rotation alias
+    if (event.key.toLowerCase() === 'l' && !isCtrlOrMeta) {
+      if ($editorStore.selectedIds.length > 0) {
+        event.preventDefault();
+        editorStore.rotatePages([], -90);
+      }
+      return;
+    }
+
+    // Arrow keys: Navigate through page cards
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      editorStore.selectAdjacentPage(-1, event.shiftKey);
+      return;
+    }
+
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      editorStore.selectAdjacentPage(1, event.shiftKey);
+      return;
     }
   }
 
@@ -142,7 +227,6 @@
 
 <main class="app-shell">
   <Toolbar
-    onAddPDFEnd={() => handleSelectPDFs(undefined)}
     onInsertPDFBefore={handleInsertBeforeSelection}
     onInsertPDFAfter={handleInsertAfterSelection}
     onExportPDF={handleExportPDF}
@@ -185,7 +269,7 @@
         </button>
       </div>
       <div class="subbar-hint">
-        ドラッグで並び替え / カード間の「＋」でその位置へ別PDFを挿入 / ダブルクリックで拡大プレビュー
+        ドラッグで並び替え / [Ctrl+X]切取・[Ctrl+V]貼付 / [Space]拡大 / [R][Shift+R]回転 / [Shift+矢印]範囲選択 / [Del]削除
       </div>
     </div>
 

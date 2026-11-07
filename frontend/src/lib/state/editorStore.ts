@@ -21,6 +21,9 @@ export interface EditorState {
   readonly pages: readonly PageItem[];
   readonly selectedIds: readonly string[];
   readonly lastSelectedId: string | null;
+  readonly anchorPageId: string | null;
+  readonly focusPageId: string | null;
+  readonly cutPageIds: readonly string[];
   readonly previewPageId: string | null;
   readonly thumbnailSize: ThumbnailSize;
   readonly isBusy: boolean;
@@ -34,6 +37,9 @@ const INITIAL_STATE: EditorState = {
   pages: [],
   selectedIds: [],
   lastSelectedId: null,
+  anchorPageId: null,
+  focusPageId: null,
+  cutPageIds: [],
   previewPageId: null,
   thumbnailSize: 'medium',
   isBusy: false,
@@ -145,6 +151,8 @@ export function createEditorStore() {
           ...state,
           selectedIds: [pageId],
           lastSelectedId: pageId,
+          anchorPageId: pageId,
+          focusPageId: pageId,
         };
       }
 
@@ -157,11 +165,13 @@ export function createEditorStore() {
           ...state,
           selectedIds: nextSelected,
           lastSelectedId: pageId,
+          anchorPageId: pageId,
+          focusPageId: pageId,
         };
       }
 
       // Range selection ('range')
-      const anchorId = state.lastSelectedId ?? pageId;
+      const anchorId = state.anchorPageId ?? state.lastSelectedId ?? pageId;
       const anchorIdx = state.pages.findIndex((p) => p.id === anchorId);
       const targetIdx = state.pages.findIndex((p) => p.id === pageId);
       if (anchorIdx === -1 || targetIdx === -1) {
@@ -169,6 +179,8 @@ export function createEditorStore() {
           ...state,
           selectedIds: [pageId],
           lastSelectedId: pageId,
+          anchorPageId: pageId,
+          focusPageId: pageId,
         };
       }
 
@@ -180,6 +192,9 @@ export function createEditorStore() {
       return {
         ...state,
         selectedIds: merged,
+        lastSelectedId: pageId,
+        anchorPageId: anchorId,
+        focusPageId: pageId,
       };
     });
   }
@@ -196,7 +211,139 @@ export function createEditorStore() {
       ...state,
       selectedIds: [],
       lastSelectedId: null,
+      anchorPageId: null,
+      focusPageId: null,
     }));
+  }
+
+  /**
+   * Moves or extends the selection to the adjacent page (-1 for previous, 1 for next)
+   * following Windows File Explorer range selection semantics.
+   */
+  function selectAdjacentPage(direction: -1 | 1, extend = false): void {
+    store.update((state) => {
+      if (state.pages.length === 0) {
+        return state;
+      }
+
+      if (state.selectedIds.length === 0) {
+        const fallbackIdx = direction > 0 ? 0 : state.pages.length - 1;
+        const target = state.pages[fallbackIdx];
+        return {
+          ...state,
+          selectedIds: [target.id],
+          lastSelectedId: target.id,
+          anchorPageId: target.id,
+          focusPageId: target.id,
+        };
+      }
+
+      const refId = state.focusPageId ?? state.lastSelectedId ?? state.selectedIds[state.selectedIds.length - 1];
+      const currentIdx = state.pages.findIndex((p) => p.id === refId);
+      if (currentIdx === -1) {
+        return state;
+      }
+
+      const nextIdx = Math.max(0, Math.min(state.pages.length - 1, currentIdx + direction));
+      if (nextIdx === currentIdx && !extend) {
+        return state;
+      }
+
+      const nextTarget = state.pages[nextIdx];
+
+      if (!extend) {
+        return {
+          ...state,
+          selectedIds: [nextTarget.id],
+          lastSelectedId: nextTarget.id,
+          anchorPageId: nextTarget.id,
+          focusPageId: nextTarget.id,
+        };
+      }
+
+      // Range extension (Shift + Arrow) - exact File Explorer behavior
+      const anchorId = state.anchorPageId ?? refId;
+      const anchorIdx = state.pages.findIndex((p) => p.id === anchorId);
+      const safeAnchorIdx = anchorIdx === -1 ? currentIdx : anchorIdx;
+
+      const start = Math.min(safeAnchorIdx, nextIdx);
+      const end = Math.max(safeAnchorIdx, nextIdx);
+      const rangeIds = state.pages.slice(start, end + 1).map((p) => p.id);
+
+      return {
+        ...state,
+        selectedIds: rangeIds,
+        lastSelectedId: nextTarget.id,
+        anchorPageId: state.pages[safeAnchorIdx].id,
+        focusPageId: nextTarget.id,
+      };
+    });
+  }
+
+  /** Marks the currently selected pages for cutting (Ctrl+X). */
+  function cutSelection(): void {
+    store.update((state) => {
+      if (state.selectedIds.length === 0) {
+        return state;
+      }
+      return {
+        ...state,
+        cutPageIds: [...state.selectedIds],
+        notice: {
+          type: 'info',
+          message: `${state.selectedIds.length} ページをカットしました。移動先を選択して Ctrl+V で貼り付けます。`,
+        },
+      };
+    });
+  }
+
+  /** Pastes the cut pages after the current selection or at targetIndex (Ctrl+V). */
+  function pasteCutPages(customTargetIndex?: number): void {
+    const state = get(store);
+    if (state.cutPageIds.length === 0) {
+      return;
+    }
+
+    let insertIndex: number;
+    if (customTargetIndex !== undefined) {
+      insertIndex = customTargetIndex;
+    } else if (state.selectedIds.length > 0) {
+      const selectedSet = new Set(state.selectedIds);
+      const indices = state.pages
+        .map((p, idx) => (selectedSet.has(p.id) ? idx : -1))
+        .filter((idx) => idx !== -1);
+      insertIndex = indices.length > 0 ? Math.max(...indices) + 1 : state.pages.length;
+    } else {
+      insertIndex = state.pages.length;
+    }
+
+    const cutIds = [...state.cutPageIds];
+    // Perform reorder
+    movePages(cutIds, insertIndex);
+
+    // Clear cut buffer and notify
+    store.update((s) => ({
+      ...s,
+      cutPageIds: [],
+      notice: {
+        type: 'success',
+        message: `${cutIds.length} ページを移動しました。`,
+      },
+    }));
+  }
+
+  /** Cancels the cut state without moving pages (Escape). */
+  function cancelCut(): void {
+    store.update((state) => {
+      if (state.cutPageIds.length === 0) {
+        return state;
+      }
+      return {
+        ...state,
+        cutPageIds: [],
+        notice: null,
+      };
+    });
   }
 
   /**
@@ -457,9 +604,13 @@ export function createEditorStore() {
     subscribe: store.subscribe,
     addSourcePDFs,
     selectPage,
+    selectAdjacentPage,
     selectAll,
     clearSelection,
     movePages,
+    cutSelection,
+    pasteCutPages,
+    cancelCut,
     rotatePages,
     deletePages,
     undo,
@@ -481,3 +632,4 @@ export const editorStore = createEditorStore();
 export const canUndo = derived(editorStore, ($state) => $state.past.length > 0);
 export const canRedo = derived(editorStore, ($state) => $state.future.length > 0);
 export const hasSelection = derived(editorStore, ($state) => $state.selectedIds.length > 0);
+export const hasCutPages = derived(editorStore, ($state) => $state.cutPageIds.length > 0);

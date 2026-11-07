@@ -1,17 +1,69 @@
 <script lang="ts">
+  import {onDestroy} from 'svelte';
   import {editorStore} from '../state/editorStore';
+  import {getSourceAccentColor} from '../types';
   import PageCard from './PageCard.svelte';
 
   export let onInsertPDFAt: (index: number) => void;
 
+  let workspaceElement: HTMLElement | null = null;
   let draggedIds: string[] = [];
   let dropTargetIndex: number | null = null;
+  let autoScrollRafId: number | null = null;
+  let autoScrollSpeed = 0;
 
   const GRID_MIN_WIDTH = {
-    small: '165px',
-    medium: '215px',
-    large: '275px',
+    small: '175px',
+    medium: '250px',
+    large: '400px',
   } as const;
+
+  function startAutoScroll(): void {
+    if (autoScrollRafId !== null) {
+      return;
+    }
+    const step = () => {
+      if (workspaceElement && autoScrollSpeed !== 0) {
+        workspaceElement.scrollTop += autoScrollSpeed;
+        autoScrollRafId = requestAnimationFrame(step);
+      } else {
+        autoScrollRafId = null;
+      }
+    };
+    autoScrollRafId = requestAnimationFrame(step);
+  }
+
+  function stopAutoScroll(): void {
+    if (autoScrollRafId !== null) {
+      cancelAnimationFrame(autoScrollRafId);
+      autoScrollRafId = null;
+    }
+    autoScrollSpeed = 0;
+  }
+
+  function handleWorkspaceDragOver(event: DragEvent): void {
+    event.preventDefault();
+    if (!workspaceElement || draggedIds.length === 0) {
+      return;
+    }
+
+    const rect = workspaceElement.getBoundingClientRect();
+    const threshold = 70;
+    const topZone = rect.top + threshold;
+    const bottomZone = rect.bottom - threshold;
+
+    if (event.clientY < topZone) {
+      const factor = Math.max(0, 1 - (event.clientY - rect.top) / threshold);
+      autoScrollSpeed = -Math.round(4 + factor * 16);
+      startAutoScroll();
+    } else if (event.clientY > bottomZone) {
+      const factor = Math.max(0, (event.clientY - bottomZone) / threshold);
+      autoScrollSpeed = Math.round(4 + factor * 16);
+      startAutoScroll();
+    } else {
+      autoScrollSpeed = 0;
+    }
+  }
 
   function handleDragStartCard(event: DragEvent, pageId: string): void {
     const currentSelected = $editorStore.selectedIds;
@@ -52,6 +104,7 @@
 
   function handleDrop(event: DragEvent): void {
     event.preventDefault();
+    stopAutoScroll();
     if (draggedIds.length > 0 && dropTargetIndex !== null) {
       editorStore.movePages(draggedIds, dropTargetIndex);
     }
@@ -60,15 +113,21 @@
   }
 
   function handleDragEnd(): void {
+    stopAutoScroll();
     draggedIds = [];
     dropTargetIndex = null;
   }
+
+  onDestroy(() => {
+    stopAutoScroll();
+  });
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
+  bind:this={workspaceElement}
   class="grid-workspace"
-  on:dragover={(e) => e.preventDefault()}
+  on:dragover={handleWorkspaceDragOver}
   on:drop={handleDrop}
   on:dragend={handleDragEnd}
 >
@@ -77,6 +136,12 @@
     style={`--card-min-width: ${GRID_MIN_WIDTH[$editorStore.thumbnailSize]}`}
   >
     {#each $editorStore.pages as page, index (page.id)}
+      {@const prev = index > 0 ? $editorStore.pages[index - 1] : null}
+      {@const isDiscontinuous =
+        prev !== null && prev.sourceId === page.sourceId && page.originalPage !== prev.originalPage + 1}
+      {@const prevPageNumber = prev ? prev.originalPage : null}
+      {@const sourceAccentColor = getSourceAccentColor(page.sourceId)}
+
       <div
         class="card-slot-wrapper"
         class:drop-before={dropTargetIndex === index}
@@ -97,11 +162,15 @@
           {page}
           outputPageNumber={index + 1}
           isSelected={$editorStore.selectedIds.includes(page.id)}
+          isCut={$editorStore.cutPageIds.includes(page.id)}
+          isFocused={$editorStore.focusPageId === page.id}
           thumbnailSize={$editorStore.thumbnailSize}
+          {sourceAccentColor}
+          {isDiscontinuous}
+          {prevPageNumber}
           onSelect={(id, mode) => editorStore.selectPage(id, mode)}
           onPreview={(id) => editorStore.openPreview(id)}
           onRotate={(id, delta) => editorStore.rotatePages([id], delta)}
-          onDelete={(id) => editorStore.deletePages([id])}
           onDragStartCard={handleDragStartCard}
         />
 
@@ -126,12 +195,13 @@
     flex: 1;
     overflow-y: auto;
     padding: 1.25rem 1.5rem 2.5rem;
+    scroll-behavior: auto;
   }
 
   .page-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--card-min-width, 215px), 1fr));
-    gap: 1.15rem;
+    grid-template-columns: repeat(auto-fill, minmax(var(--card-min-width, 250px), 1fr));
+    gap: 1.2rem;
     align-items: start;
   }
 
