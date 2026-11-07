@@ -10,10 +10,6 @@ export function GetPDFBase64(arg1) {
   return window['go']['main']['App']['GetPDFBase64'](arg1);
 }
 
-export function RegisterPDFPaths(arg1) {
-  return window['go']['main']['App']['RegisterPDFPaths'](arg1);
-}
-
 export function SelectPDFs() {
   return window['go']['main']['App']['SelectPDFs']();
 }

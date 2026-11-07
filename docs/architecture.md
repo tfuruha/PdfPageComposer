@@ -23,7 +23,7 @@ sequenceDiagram
     participant BE as Backend (Go / pdfcpu)
 
     User->>FE: PDF追加 (ダイアログ or ファイルドロップ)
-    FE->>Wails: SelectPDFs() / RegisterPDFPaths(paths)
+    FE->>Wails: SelectPDFs() (または OnFileDrop イベント通知)
     Wails->>BE: PDF検証 & ページ数取得 (pdfcpu)
     BE-->>FE: []SourcePDF (id, fileName, pageCount)
     opt 複数ファイル(2件以上)の場合
@@ -49,8 +49,7 @@ sequenceDiagram
 ### 3.1 Wails バインディング (`App` メソッド)
 | メソッド名 | 引数 | 戻り値 | 役割 |
 |---|---|---|---|
-| `SelectPDFs()` | なし | `([]pdfcomposer.SourcePDF, error)` | OSのファイル選択ダイアログを開き、選択されたPDFを登録してメタデータを返す |
-| `RegisterPDFPaths(paths)` | `paths []string` | `([]pdfcomposer.SourcePDF, error)` | ドラッグ＆ドロップ等で渡されたファイルパス群を検証・登録してメタデータを返す |
+| `SelectPDFs()` | なし | `([]pdfcomposer.SourcePDF, error)` | OSのファイル選択ダイアログを開き、選択されたPDFを登録してメタデータを返す（ファイルドロップ時は `runtime.OnFileDrop` 経由で `pdf:files-dropped` イベントを発行） |
 | `GetPDFBase64(sourceId)` | `sourceId string` | `(string, error)` | 登録済みPDFファイルのバイナリをBase64文字列として返し、カスタムURIスキーム（`wails://`）環境に依存せず `pdfjs-dist` へ `Uint8Array` を供給する |
 | `ExportPDF(req)` | `req pdfcomposer.ExportRequest` | `(string, error)` | OSの保存ダイアログを開き（`req.OutputPath` が空の場合）、指定ページ順・回転角でPDFを合成出力する。キャンセル時は空文字列を返す |
 

@@ -78,6 +78,11 @@ function pushHistory(
   return nextPast;
 }
 
+/** Returns the page ID if it exists in validIds, otherwise null. */
+function sanitizePageRef(id: string | null, validIds: ReadonlySet<string>): string | null {
+  return id !== null && validIds.has(id) ? id : null;
+}
+
 export function createEditorStore() {
   const store = writable<EditorState>(INITIAL_STATE);
 
@@ -503,7 +508,7 @@ export function createEditorStore() {
         return state;
       }
 
-      const nextSelected = state.selectedIds.filter((id) => !targetSet.has(id));
+      const validIds = new Set(nextPages.map((p) => p.id));
       let nextPreviewId = state.previewPageId;
       if (nextPreviewId && targetSet.has(nextPreviewId)) {
         const oldIdx = state.pages.findIndex((p) => p.id === nextPreviewId);
@@ -514,11 +519,11 @@ export function createEditorStore() {
       return {
         ...state,
         pages: nextPages,
-        selectedIds: nextSelected,
-        lastSelectedId:
-          state.lastSelectedId && !targetSet.has(state.lastSelectedId)
-            ? state.lastSelectedId
-            : null,
+        selectedIds: state.selectedIds.filter((id) => validIds.has(id)),
+        lastSelectedId: sanitizePageRef(state.lastSelectedId, validIds),
+        anchorPageId: sanitizePageRef(state.anchorPageId, validIds),
+        focusPageId: sanitizePageRef(state.focusPageId, validIds),
+        cutPageIds: state.cutPageIds.filter((id) => validIds.has(id)),
         previewPageId: nextPreviewId,
         past: pushHistory(state.past, state.pages),
         future: [],
@@ -541,8 +546,11 @@ export function createEditorStore() {
         ...state,
         pages: previousPages,
         selectedIds: state.selectedIds.filter((id) => validIds.has(id)),
-        previewPageId:
-          state.previewPageId && validIds.has(state.previewPageId) ? state.previewPageId : null,
+        lastSelectedId: sanitizePageRef(state.lastSelectedId, validIds),
+        anchorPageId: sanitizePageRef(state.anchorPageId, validIds),
+        focusPageId: sanitizePageRef(state.focusPageId, validIds),
+        cutPageIds: state.cutPageIds.filter((id) => validIds.has(id)),
+        previewPageId: sanitizePageRef(state.previewPageId, validIds),
         past: nextPast,
         future: nextFuture,
       };
@@ -564,8 +572,11 @@ export function createEditorStore() {
         ...state,
         pages: nextPages,
         selectedIds: state.selectedIds.filter((id) => validIds.has(id)),
-        previewPageId:
-          state.previewPageId && validIds.has(state.previewPageId) ? state.previewPageId : null,
+        lastSelectedId: sanitizePageRef(state.lastSelectedId, validIds),
+        anchorPageId: sanitizePageRef(state.anchorPageId, validIds),
+        focusPageId: sanitizePageRef(state.focusPageId, validIds),
+        cutPageIds: state.cutPageIds.filter((id) => validIds.has(id)),
+        previewPageId: sanitizePageRef(state.previewPageId, validIds),
         past: nextPast,
         future: nextFuture,
       };
@@ -582,6 +593,9 @@ export function createEditorStore() {
         pages: [],
         selectedIds: [],
         lastSelectedId: null,
+        anchorPageId: null,
+        focusPageId: null,
+        cutPageIds: [],
         previewPageId: null,
         past: pushHistory(state.past, state.pages),
         future: [],

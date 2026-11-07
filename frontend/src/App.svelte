@@ -10,6 +10,7 @@
   import PageGrid from './lib/components/PageGrid.svelte';
   import PreviewModal from './lib/components/PreviewModal.svelte';
   import Toolbar from './lib/components/Toolbar.svelte';
+  import {clearPDFDocumentCache} from './lib/pdf/pdfRenderer';
   import {activeSourceList, editorStore} from './lib/state/editorStore';
   import type {SourcePDF} from './lib/types';
 
@@ -19,23 +20,38 @@
   let pendingImportSources: SourcePDF[] = [];
   let pendingImportInsertIndex: number | undefined = undefined;
 
+  function applyIncomingSources(
+    sources: SourcePDF[],
+    insertIndex: number | undefined,
+    singleSuccessMessage: (addedCount: number) => string,
+  ): void {
+    if (sources.length === 0) {
+      return;
+    }
+    if (sources.length === 1) {
+      const addedCount = editorStore.addSourcePDFs(sources, insertIndex);
+      editorStore.setNotice({
+        type: 'info',
+        message: singleSuccessMessage(addedCount),
+      });
+    } else {
+      pendingImportSources = sources;
+      pendingImportInsertIndex = insertIndex;
+      fileOrderModalMode = 'import';
+      isFileOrderModalOpen = true;
+    }
+  }
+
   async function handleSelectPDFs(insertIndex?: number): Promise<void> {
     editorStore.setBusy(true);
     editorStore.setNotice(null);
     try {
       const sources = await selectPDFsViaDialog();
-      if (sources.length === 1) {
-        const addedCount = editorStore.addSourcePDFs(sources, insertIndex);
-        editorStore.setNotice({
-          type: 'info',
-          message: `1 ファイル（計 ${addedCount} ページ）を追加しました。`,
-        });
-      } else if (sources.length > 1) {
-        pendingImportSources = sources;
-        pendingImportInsertIndex = insertIndex;
-        fileOrderModalMode = 'import';
-        isFileOrderModalOpen = true;
-      }
+      applyIncomingSources(
+        sources,
+        insertIndex,
+        (addedCount) => `1 ファイル（計 ${addedCount} ページ）を追加しました。`,
+      );
     } catch (err: unknown) {
       editorStore.setNotice({
         type: 'error',
@@ -84,6 +100,11 @@
   function handleInsertAfterSelection(): void {
     const idx = editorStore.getSelectionInsertionIndex('after');
     void handleSelectPDFs(idx);
+  }
+
+  function handleClearAll(): void {
+    editorStore.clearAll();
+    clearPDFDocumentCache();
   }
 
   async function handleExportPDF(): Promise<void> {
@@ -240,26 +261,16 @@
 
     unsubscribeFileDrop = subscribeToFileDrop(
       (sources: SourcePDF[]) => {
-        if (sources.length === 0) {
-          return;
-        }
         const insertIdx =
           $editorStore.selectedIds.length > 0
             ? editorStore.getSelectionInsertionIndex('after')
             : undefined;
 
-        if (sources.length === 1) {
-          const addedCount = editorStore.addSourcePDFs(sources, insertIdx);
-          editorStore.setNotice({
-            type: 'info',
-            message: `ドロップされた 1 ファイル（計 ${addedCount} ページ）を追加しました。`,
-          });
-        } else {
-          pendingImportSources = sources;
-          pendingImportInsertIndex = insertIdx;
-          fileOrderModalMode = 'import';
-          isFileOrderModalOpen = true;
-        }
+        applyIncomingSources(
+          sources,
+          insertIdx,
+          (addedCount) => `ドロップされた 1 ファイル（計 ${addedCount} ページ）を追加しました。`,
+        );
       },
       (errMessage: string) => {
         editorStore.setNotice({
@@ -316,7 +327,7 @@
           選択解除
         </button>
         <span class="dot">·</span>
-        <button type="button" class="btn-link danger" on:click={() => editorStore.clearAll()}>
+        <button type="button" class="btn-link danger" on:click={handleClearAll}>
           すべてクリア
         </button>
       </div>

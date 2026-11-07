@@ -7,7 +7,6 @@ import type {ExportRequest, SourcePDF} from '../types';
 
 interface WailsAppBindings {
   SelectPDFs(): Promise<SourcePDF[]>;
-  RegisterPDFPaths(paths: string[]): Promise<SourcePDF[]>;
   GetPDFBase64(sourceId: string): Promise<string>;
   ExportPDF(req: ExportRequest): Promise<string>;
 }
@@ -49,12 +48,6 @@ function decodeBase64ToBytes(base64: string): Uint8Array {
 /** Opens the native file selection dialog and returns the registered SourcePDFs. */
 export async function selectPDFsViaDialog(): Promise<SourcePDF[]> {
   const result = await getAppBindings().SelectPDFs();
-  return result ?? [];
-}
-
-/** Registers specific file paths with the Go backend. */
-export async function registerPDFPaths(paths: string[]): Promise<SourcePDF[]> {
-  const result = await getAppBindings().RegisterPDFPaths(paths);
   return result ?? [];
 }
 

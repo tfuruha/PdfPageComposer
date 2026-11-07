@@ -221,4 +221,32 @@ describe('editorStore', () => {
       'docA.pdf:3',
     ]);
   });
+
+  it('cleans up anchorPageId, focusPageId, and cutPageIds on deletePages, clearAll, and undo/redo', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A]);
+    const pages = get(store).pages;
+
+    // Select page 1 and mark for cut
+    store.selectPage(pages[1].id, 'single');
+    store.cutSelection();
+    expect(get(store).anchorPageId).toBe(pages[1].id);
+    expect(get(store).focusPageId).toBe(pages[1].id);
+    expect(get(store).cutPageIds).toEqual([pages[1].id]);
+
+    // Delete page 1 -> anchorPageId, focusPageId, cutPageIds should be sanitized
+    store.deletePages([pages[1].id]);
+    expect(get(store).anchorPageId).toBeNull();
+    expect(get(store).focusPageId).toBeNull();
+    expect(get(store).cutPageIds).toEqual([]);
+
+    // Select remaining page 0, cut it, and clearAll
+    const remaining = get(store).pages;
+    store.selectPage(remaining[0].id, 'single');
+    store.cutSelection();
+    store.clearAll();
+    expect(get(store).pages).toHaveLength(0);
+    expect(get(store).anchorPageId).toBeNull();
+    expect(get(store).focusPageId).toBeNull();
+    expect(get(store).cutPageIds).toEqual([]);
+  });
 });

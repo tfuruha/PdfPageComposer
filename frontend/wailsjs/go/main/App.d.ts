@@ -6,6 +6,4 @@ export function ExportPDF(arg1:pdfcomposer.ExportRequest):Promise<string>;
 
 export function GetPDFBase64(arg1:string):Promise<string>;
 
-export function RegisterPDFPaths(arg1:Array<string>):Promise<Array<pdfcomposer.SourcePDF>>;
-
 export function SelectPDFs():Promise<Array<pdfcomposer.SourcePDF>>;

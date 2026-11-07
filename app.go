@@ -72,11 +72,6 @@ func (a *App) SelectPDFs() ([]pdfcomposer.SourcePDF, error) {
 	return a.service.RegisterFiles(paths)
 }
 
-// RegisterPDFPaths registers a list of file paths directly and returns their metadata.
-func (a *App) RegisterPDFPaths(paths []string) ([]pdfcomposer.SourcePDF, error) {
-	return a.service.RegisterFiles(paths)
-}
-
 // GetPDFBase64 returns the Base64-encoded binary content of a registered source PDF
 // so the frontend PDF.js renderer can load it reliably across all WebView schemes.
 func (a *App) GetPDFBase64(sourceID string) (string, error) {

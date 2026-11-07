@@ -46,6 +46,14 @@ export function getPDFDocument(sourceId: string): Promise<PDFDocumentProxy> {
   return promise;
 }
 
+/** Destroys all cached PDFDocumentProxy instances and clears the in-memory document cache. */
+export function clearPDFDocumentCache(): void {
+  for (const promise of documentCache.values()) {
+    void promise.then((doc) => doc.destroy()).catch(() => {});
+  }
+  documentCache.clear();
+}
+
 export interface RenderPageOptions {
   readonly canvas: HTMLCanvasElement;
   readonly sourceId: string;

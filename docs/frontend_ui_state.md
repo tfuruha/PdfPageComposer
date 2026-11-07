@@ -31,35 +31,42 @@ export interface PageItem {
 ## 3. ストア設計 (`frontend/src/lib/state/editorStore.ts`)
 
 ### 3.1 管理する状態 (`EditorState`)
-- `sources: Record<string, SourcePDF>`: 読み込み済みソースPDFのマップ
-- `pages: PageItem[]`: 現在の出力予定ページ配列（順序＝出力ページ順）
-- `selectedIds: string[]`: 現在選択されている `PageItem.id` のリスト
-- `lastSelectedId: string | null`: `Shift` + クリックによる範囲選択の起点ID
-- `insertTargetIndex: number | null`: 「指定位置にPDFを挿入」する際の対象インデックス（`null` の場合は選択ページの直後または末尾）
+- `sources: Readonly<Record<string, SourcePDF>>`: 読み込み済みソースPDFのマップ
+- `pages: readonly PageItem[]`: 現在の出力予定ページ配列（順序＝出力ページ順）
+- `selectedIds: readonly string[]`: 現在選択されている `PageItem.id` のリスト
+- `lastSelectedId: string | null`: 直近に選択されたページID
+- `anchorPageId: string | null`: `Shift` + クリック / 矢印キーによる範囲選択の起点（アンカー）ID
+- `focusPageId: string | null`: キーボードナビゲーション時の現在フォーカス位置のページID
+- `cutPageIds: readonly string[]`: `Ctrl+X` でカット状態にある `PageItem.id` のリスト
 - `previewPageId: string | null`: 拡大プレビューモーダルで表示中の `PageItem.id`
-- `past: PageItem[][]`: Undo 用履歴スタック（最大50件）
-- `future: PageItem[][]`: Redo 用履歴スタック
+- `thumbnailSize: ThumbnailSize`: サムネイル表示サイズ（`'small' | 'medium' | 'large'`）
+- `isBusy: boolean`: バックエンド処理中フラグ
+- `notice: StatusNotice | null`: 画面上部の通知バナー情報
+- `past: readonly (readonly PageItem[])[]`: Undo 用履歴スタック（最大50件）
+- `future: readonly (readonly PageItem[])[]`: Redo 用履歴スタック
 
 ### 3.2 主要アクション
-1. **`addSourcePages(sources: SourcePDF[], insertIndex?: number)`**:
+1. **`addSourcePDFs(newSources: readonly SourcePDF[], insertIndex?: number)`**:
    - 各 `SourcePDF` の `1..pageCount` から `PageItem` を生成し、`insertIndex` が指定されていればその位置に、未指定なら末尾に挿入する。
    - 操作前の `pages` を `past` に積み、`future` をクリアする。
-2. **`selectPage(id: string, mode: 'single' | 'toggle' | 'range')`**:
-   - `single`: そのページのみを選択（`lastSelectedId = id`）
-   - `toggle` (`Ctrl`/`Cmd`+Click): 選択状態を反転（`lastSelectedId = id`）
-   - `range` (`Shift`+Click): `lastSelectedId` から `id` までの連続範囲を選択
+2. **`selectPage(pageId: string, mode: 'single' | 'toggle' | 'range')`**:
+   - `single`: そのページのみを選択（`lastSelectedId = anchorPageId = focusPageId = pageId`）
+   - `toggle` (`Ctrl`/`Cmd`+Click): 選択状態を反転（`lastSelectedId = anchorPageId = focusPageId = pageId`）
+   - `range` (`Shift`+Click): `anchorPageId` から `pageId` までの連続範囲を選択
 3. **`selectAdjacentPage(direction: -1 | 1, extend?: boolean)`**:
-   - `ArrowLeft` (-1) / `ArrowRight` (1) によるキーボードでのページ選択移動。`extend: true` の場合は範囲選択を拡張する。
-4. **`movePages(draggedIds: string[], targetIndex: number)`**:
+   - `ArrowLeft` (-1) / `ArrowRight` (1) によるキーボードでのページ選択移動。`extend: true` の場合はアンカーを起点に範囲選択を伸縮する。
+4. **`movePages(pageIdsToMove: readonly string[], targetIndex: number)`**:
    - ドラッグされたページ（複数選択中のページをドラッグした場合は選択中の全ページを元の相対順序を保ったまま）を `targetIndex` の位置へ移動する。
-5. **`rotatePages(ids: string[], delta: 90 | -90)`**:
+5. **`cutSelection()` / `pasteCutPages(customTargetIndex?: number)` / `cancelCut()`**:
+   - 選択中ページをカットバッファ（`cutPageIds`）に記録し、貼り付け時に選択位置の直後（または指定インデックス）へ一括移動する。
+6. **`rotatePages(pageIds: readonly string[], delta: 90 | -90)`**:
    - 対象ページの `rotation` を `((rotation + delta) % 360 + 360) % 360` に更新する。
-6. **`deletePages(ids: string[])`**:
-   - 対象ページを `pages` から除外し、`selectedIds` からも除外する。
-7. **`reorderPagesBySourceOrder(orderedSourceIds: readonly string[])`**:
+7. **`deletePages(pageIds?: readonly string[])`**:
+   - 対象ページを `pages` から除外し、`selectedIds` / `lastSelectedId` / `anchorPageId` / `focusPageId` / `cutPageIds` からも無効なIDを除去する。
+8. **`reorderPagesBySourceOrder(orderedSourceIds: readonly string[])`**:
    - ワークスペース内の全ページを、指定された `orderedSourceIds` の順序に従ってファイルごとにグループ化して一括再配置する。各ファイル内の相対ページ順および回転角度はそのまま保持され、Undo 履歴に記録される。
-8. **`undo()` / `redo()`**:
-   - `past` / `future` スタック間で `pages` スナップショットを復元する。
+9. **`undo()` / `redo()` / `clearAll()`**:
+   - `past` / `future` スタック間で `pages` スナップショットを復元（または全クリア）し、選択・アンカー・カット状態も有効なページIDのみに整合させる。
 
 ### 3.3 派生ストア (Derived Stores)
 - `activeSourceList`: ワークスペース内のページ出現順に従ったユニークな `SourcePDF` の配列
