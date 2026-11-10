@@ -9,6 +9,7 @@
   } from '../state/editorStore';
   import type {ThumbnailSize} from '../types';
 
+  export let onNewProject: () => void;
   export let onInsertPDFBefore: () => void;
   export let onInsertPDFAfter: () => void;
   export let onOpenFileOrder: () => void;
@@ -35,6 +36,18 @@
         </span>
       {/if}
     </span>
+  </div>
+
+  <div class="toolbar-group">
+    <button
+      type="button"
+      class="btn btn-outline"
+      on:click={onNewProject}
+      disabled={$editorStore.isBusy || $editorStore.pages.length === 0}
+      title="現在の編集内容をクリアして新しい作業を開始します (Ctrl+N)"
+    >
+      📄 新規作成
+    </button>
   </div>
 
   <div class="toolbar-group">

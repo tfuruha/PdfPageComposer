@@ -72,6 +72,11 @@ func (a *App) SelectPDFs() ([]pdfcomposer.SourcePDF, error) {
 	return a.service.RegisterFiles(paths)
 }
 
+// ClearSources removes all registered source PDFs in the backend service.
+func (a *App) ClearSources() {
+	a.service.ClearSources()
+}
+
 // GetPDFBase64 returns the Base64-encoded binary content of a registered source PDF
 // so the frontend PDF.js renderer can load it reliably across all WebView schemes.
 func (a *App) GetPDFBase64(sourceID string) (string, error) {

@@ -132,6 +132,15 @@ func (s *Service) ReadSourceBytes(sourceID string) ([]byte, error) {
 	return data, nil
 }
 
+// ClearSources removes all registered source PDFs and resets internal counters.
+func (s *Service) ClearSources() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sources = make(map[string]SourcePDF)
+	s.pathMap = make(map[string]string)
+	s.nextID = 1
+}
+
 // NormalizeRotation normalizes an angle in degrees to 0, 90, 180, or 270.
 func NormalizeRotation(deg int) (int, error) {
 	norm := ((deg % 360) + 360) % 360

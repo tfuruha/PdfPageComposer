@@ -9,6 +9,7 @@ interface WailsAppBindings {
   SelectPDFs(): Promise<SourcePDF[]>;
   GetPDFBase64(sourceId: string): Promise<string>;
   ExportPDF(req: ExportRequest): Promise<string>;
+  ClearSources(): Promise<void>;
 }
 
 interface WailsRuntime {
@@ -73,6 +74,14 @@ export async function getPDFBytes(sourceId: string): Promise<Uint8Array> {
 /** Exports the composed PDF via the Go backend and returns the saved file path (or "" if cancelled). */
 export async function exportComposedPDF(req: ExportRequest): Promise<string> {
   return getAppBindings().ExportPDF(req);
+}
+
+/** Clears all registered source PDFs and internal registries in the Go backend. */
+export async function clearBackendSources(): Promise<void> {
+  const app = window.go?.main?.App;
+  if (app?.ClearSources) {
+    await app.ClearSources();
+  }
 }
 
 /** Subscribes to native file drop events emitted by the Go backend. */

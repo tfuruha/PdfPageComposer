@@ -54,6 +54,10 @@ type ExportRequest struct {
    - 全チャンクが1ページのみの場合はそのチャンクを、2ページ以上の場合は `api.MergeCreateFile(chunkPaths, mergedTempPath, false, conf)` で一時結合PDFを生成する。
    - 入力元PDFと同じパスへ上書き保存された場合でも破損しないよう、一時ファイルから最終出力先 `req.OutputPath` へコピー（またはリネーム）して完了する。
 
+### 3.3 `ClearSources()`
+1. スレッドセーフ（`sync.RWMutex` 排他ロック）に `s.sources` および `s.pathMap` を空のマップに再初期化し、`s.nextID = 1` にリセットする。
+2. 新規プロジェクト開始時にフロントエンドから呼び出され、バックエンドに蓄積された元PDFファイルの登録情報やパス逆引きマップを完全に消去する。
+
 ---
 
 ## 4. 判断基準と制限事項

@@ -249,4 +249,32 @@ describe('editorStore', () => {
     expect(get(store).focusPageId).toBeNull();
     expect(get(store).cutPageIds).toEqual([]);
   });
+
+  it('resets all state for a new project including history while preserving thumbnailSize', () => {
+    store.setThumbnailSize('large');
+    store.addSourcePDFs([SAMPLE_PDF_A]);
+    const pages = get(store).pages;
+    store.selectPage(pages[0].id, 'single');
+    store.cutSelection();
+    store.deletePages([pages[0].id]); // creates past history
+
+    let state = get(store);
+    expect(state.pages).toHaveLength(2);
+    expect(state.past.length).toBeGreaterThan(0);
+    expect(Object.keys(state.sources).length).toBeGreaterThan(0);
+
+    store.resetAll();
+
+    state = get(store);
+    expect(state.pages).toHaveLength(0);
+    expect(state.sources).toEqual({});
+    expect(state.selectedIds).toEqual([]);
+    expect(state.cutPageIds).toEqual([]);
+    expect(state.past).toEqual([]);
+    expect(state.future).toEqual([]);
+    expect(state.anchorPageId).toBeNull();
+    expect(state.focusPageId).toBeNull();
+    expect(state.previewPageId).toBeNull();
+    expect(state.thumbnailSize).toBe('large'); // preserved
+  });
 });

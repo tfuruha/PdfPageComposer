@@ -205,3 +205,30 @@ func TestCompose_ValidationErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestService_ClearSources(t *testing.T) {
+	tempDir := t.TempDir()
+	pdfA := filepath.Join(tempDir, "docA.pdf")
+	writeMinimalPDF(t, pdfA, 2)
+
+	svc := NewService()
+	src, err := svc.RegisterFile(pdfA)
+	if err != nil {
+		t.Fatalf("RegisterFile failed: %v", err)
+	}
+	if _, ok := svc.GetSource(src.ID); !ok {
+		t.Fatalf("expected source %q to exist before clear", src.ID)
+	}
+
+	svc.ClearSources()
+
+	if _, ok := svc.GetSource(src.ID); ok {
+		t.Errorf("expected source %q to be cleared, but found it", src.ID)
+	}
+	if len(svc.sources) != 0 {
+		t.Errorf("expected sources map to be empty, got %d", len(svc.sources))
+	}
+	if len(svc.pathMap) != 0 {
+		t.Errorf("expected pathMap to be empty, got %d", len(svc.pathMap))
+	}
+}

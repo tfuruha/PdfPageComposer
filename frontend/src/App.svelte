@@ -1,6 +1,7 @@
 <script lang="ts">
   import {onDestroy, onMount} from 'svelte';
   import {
+    clearBackendSources,
     exportComposedPDF,
     selectPDFsViaDialog,
     subscribeToFileDrop,
@@ -108,9 +109,27 @@
     void handleSelectPDFs(idx);
   }
 
-  function handleClearAll(): void {
-    editorStore.clearAll();
+  async function handleNewProject(): Promise<void> {
+    if ($editorStore.pages.length > 0) {
+      const ok = window.confirm(
+        '現在の編集内容をクリアして、新しい作業を開始しますか？\n（未保存の変更内容は破棄されます）',
+      );
+      if (!ok) {
+        return;
+      }
+    }
+
     clearPDFDocumentCache();
+    await clearBackendSources();
+    editorStore.resetAll();
+    editorStore.setNotice({
+      type: 'info',
+      message: '新しい作業を開始しました。PDFファイルをドロップまたは選択してください。',
+    });
+  }
+
+  function handleClearAll(): void {
+    void handleNewProject();
   }
 
   async function handleExportPDF(): Promise<void> {
@@ -157,6 +176,12 @@
 
     const isModalOpen = $editorStore.previewPageId !== null;
     const isCtrlOrMeta = event.ctrlKey || event.metaKey;
+
+    if (isCtrlOrMeta && event.key.toLowerCase() === 'n' && !isModalOpen) {
+      event.preventDefault();
+      void handleNewProject();
+      return;
+    }
 
     if (isCtrlOrMeta && event.key.toLowerCase() === 'z') {
       event.preventDefault();
@@ -295,6 +320,7 @@
 
 <main class="app-shell">
   <Toolbar
+    onNewProject={handleNewProject}
     onInsertPDFBefore={handleInsertBeforeSelection}
     onInsertPDFAfter={handleInsertAfterSelection}
     onOpenFileOrder={handleOpenFileOrder}
@@ -339,7 +365,7 @@
         </button>
       </div>
       <div class="subbar-hint">
-        ドラッグで並び替え / [Ctrl+X]切取・[Ctrl+V]貼付 / [Space]拡大 / [R][Shift+R]回転 / [Shift+矢印]範囲選択 / [Del]削除
+        ドラッグで並び替え / [Ctrl+N]新規作成 / [Ctrl+X]切取・[Ctrl+V]貼付 / [Space]拡大 / [R][Shift+R]回転 / [Shift+矢印]範囲選択 / [Del]削除
       </div>
     </div>
 

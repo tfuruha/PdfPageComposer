@@ -603,6 +603,18 @@ export function createEditorStore() {
     });
   }
 
+  /**
+   * Resets the entire editor state back to initial state (for starting a new project),
+   * clearing sources, pages, selection, cut buffer, and Undo/Redo history,
+   * while preserving the user's current thumbnailSize preference.
+   */
+  function resetAll(): void {
+    store.update((state) => ({
+      ...INITIAL_STATE,
+      thumbnailSize: state.thumbnailSize,
+    }));
+  }
+
   function openPreview(pageId: string): void {
     store.update((state) => ({
       ...state,
@@ -689,6 +701,7 @@ export function createEditorStore() {
     undo,
     redo,
     clearAll,
+    resetAll,
     openPreview,
     closePreview,
     setThumbnailSize,

@@ -52,6 +52,7 @@ sequenceDiagram
 | `SelectPDFs()` | なし | `([]pdfcomposer.SourcePDF, error)` | OSのファイル選択ダイアログを開き、選択されたPDFを登録してメタデータを返す（ファイルドロップ時は `runtime.OnFileDrop` 経由で `pdf:files-dropped` イベントを発行） |
 | `GetPDFBase64(sourceId)` | `sourceId string` | `(string, error)` | 登録済みPDFファイルのバイナリをBase64文字列として返し、カスタムURIスキーム（`wails://`）環境に依存せず `pdfjs-dist` へ `Uint8Array` を供給する |
 | `ExportPDF(req)` | `req pdfcomposer.ExportRequest` | `(string, error)` | OSの保存ダイアログを開き（`req.OutputPath` が空の場合）、指定ページ順・回転角でPDFを合成出力する。キャンセル時は空文字列を返す |
+| `ClearSources()` | なし | なし | バックエンドに登録された元PDFの管理情報（`sources` マップおよび `pathMap`）をすべてクリアし、内部IDカウンタを初期化する |
 
 ### 3.2 ローカルPDF配信エンドポイント
 - **パス**: `GET /local-pdf/{sourceId}`
