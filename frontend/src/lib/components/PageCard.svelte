@@ -1,6 +1,6 @@
 <script lang="ts">
   import {onDestroy, onMount} from 'svelte';
-  import {renderPageToCanvas} from '../pdf/pdfRenderer';
+  import {renderHighResPageRegion, renderPageToCanvas} from '../pdf/pdfRenderer';
   import type {PageItem, SelectionMode, ThumbnailSize} from '../types';
 
   export let page: PageItem;
@@ -26,11 +26,21 @@
   let observer: IntersectionObserver | null = null;
   let showLoupe = false;
   let lastRenderKey = '';
+  let loupeRenderSeq = 0;
+  let isLoupeHighResLoading = false;
 
   const SIZE_TO_WIDTH: Record<ThumbnailSize, number> = {
     small: 140,
     medium: 210,
     large: 360,
+  };
+
+  /** ルーペで拡大表示するページ右上領域 (横40% × 縦28%) */
+  const LOUPE_REGION = {
+    xPercent: 0.60,
+    yPercent: 0.00,
+    widthPercent: 0.40,
+    heightPercent: 0.28,
   };
 
   $: targetWidth = SIZE_TO_WIDTH[thumbnailSize];
@@ -73,7 +83,7 @@
         targetHeight: height,
       });
       if (showLoupe) {
-        updateLoupe();
+        void updateLoupe();
       }
     } catch (err: unknown) {
       renderError = err instanceof Error ? err.message : '描画エラー';
@@ -82,40 +92,78 @@
     }
   }
 
-  function updateLoupe(): void {
-    if (!canvasElement || !loupeCanvas) {
+  async function updateLoupe(): Promise<void> {
+    if (!loupeCanvas) {
       return;
     }
-    const sWidth = canvasElement.width * 0.40;
-    const sHeight = canvasElement.height * 0.28;
-    const sx = canvasElement.width - sWidth;
-    const sy = 0;
+    const currentSeq = ++loupeRenderSeq;
 
-    loupeCanvas.width = 240;
-    loupeCanvas.height = 160;
-    const ctx = loupeCanvas.getContext('2d');
-    if (!ctx) {
-      return;
+    // 1. アスペクト比と Canvas サイズの初期化 (Retina / HiDPI対応)
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const loupeDisplayWidth = 280;
+    let regionAspect = 1.0;
+    if (canvasElement && canvasElement.height > 0) {
+      regionAspect =
+        (canvasElement.width * LOUPE_REGION.widthPercent) /
+        (canvasElement.height * LOUPE_REGION.heightPercent);
     }
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, loupeCanvas.width, loupeCanvas.height);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(
-      canvasElement,
-      Math.max(0, sx),
-      sy,
-      sWidth,
-      sHeight,
-      0,
-      0,
-      loupeCanvas.width,
-      loupeCanvas.height,
-    );
+    // 極端なアスペクト比に対する安全ガード
+    const clampedAspect = Math.max(0.5, Math.min(2.5, regionAspect));
+    const loupeDisplayHeight = Math.round(loupeDisplayWidth / clampedAspect);
+
+    loupeCanvas.width = Math.round(loupeDisplayWidth * dpr);
+    loupeCanvas.height = Math.round(loupeDisplayHeight * dpr);
+    loupeCanvas.style.width = `${loupeDisplayWidth}px`;
+    loupeCanvas.style.height = `${loupeDisplayHeight}px`;
+
+    // 2. 即時プレースホルダー描画 (既存サムネイルから比率を維持して即座に描画)
+    if (canvasElement && canvasElement.width > 0 && canvasElement.height > 0) {
+      const sWidth = canvasElement.width * LOUPE_REGION.widthPercent;
+      const sHeight = canvasElement.height * LOUPE_REGION.heightPercent;
+      const sx = canvasElement.width * LOUPE_REGION.xPercent;
+      const sy = canvasElement.height * LOUPE_REGION.yPercent;
+
+      const ctx = loupeCanvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, loupeCanvas.width, loupeCanvas.height);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(
+          canvasElement,
+          Math.max(0, sx),
+          Math.max(0, sy),
+          sWidth,
+          sHeight,
+          0,
+          0,
+          loupeCanvas.width,
+          loupeCanvas.height,
+        );
+      }
+    }
+
+    // 3. 高解像度描画 (元PDFの解像度に近いシャープな高精細画像への置き換え)
+    isLoupeHighResLoading = true;
+    try {
+      await renderHighResPageRegion({
+        canvas: loupeCanvas,
+        sourceId: page.sourceId,
+        pageNumber: page.originalPage,
+        rotation: page.rotation,
+        region: LOUPE_REGION,
+      });
+    } catch (err: unknown) {
+      console.warn('高解像度ルーペの描画に失敗しました:', err);
+    } finally {
+      if (currentSeq === loupeRenderSeq) {
+        isLoupeHighResLoading = false;
+      }
+    }
   }
 
-  $: if (showLoupe && loupeCanvas && canvasElement) {
-    updateLoupe();
+  $: if (showLoupe && loupeCanvas) {
+    void updateLoupe();
   }
 
   function handleCardClick(event: MouseEvent): void {
@@ -262,6 +310,9 @@
       <div class="loupe-popup" role="tooltip">
         <div class="loupe-title">
           <span>右上コーナー拡大 (p.{page.originalPage})</span>
+          {#if isLoupeHighResLoading}
+            <span class="loupe-loading-badge" title="高精細読込中">HD読込中</span>
+          {/if}
         </div>
         <canvas bind:this={loupeCanvas} class="loupe-canvas"></canvas>
       </div>
@@ -523,22 +574,45 @@
     pointer-events: none;
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
+    gap: 0.35rem;
+    max-width: 95vw;
   }
 
   .loupe-title {
     font-size: 0.72rem;
     font-weight: 600;
     color: var(--accent-color);
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .loupe-loading-badge {
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: #ffffff;
+    background: var(--accent-color);
+    padding: 0.08rem 0.32rem;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+    animation: pulse 1s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
   }
 
   .loupe-canvas {
     display: block;
-    width: 240px;
-    height: 160px;
     background: #ffffff;
     border: 1px solid #e2e8f0;
     border-radius: 4px;
+    box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.06);
   }
 </style>

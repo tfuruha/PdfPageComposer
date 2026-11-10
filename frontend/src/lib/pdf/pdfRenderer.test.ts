@@ -3,8 +3,8 @@
  * and in-process WorkerMessageHandler.
  */
 
-import {describe, expect, it} from 'vitest';
-import {getPDFDocument} from './pdfRenderer';
+import {describe, expect, it, vi} from 'vitest';
+import {clearPDFDocumentCache, getPDFDocument, renderHighResPageRegion} from './pdfRenderer';
 
 // Minimal valid 1-page PDF encoded as Base64
 const MINIMAL_PDF_TEXT = `%PDF-1.4
@@ -34,6 +34,8 @@ describe('pdfRenderer', () => {
   it('loads a PDFDocumentProxy via Wails GetPDFBase64 and in-process pdfjsWorker', async () => {
     const base64Pdf = btoa(MINIMAL_PDF_TEXT);
     (globalThis as Record<string, unknown>)['window'] = {
+      requestAnimationFrame: (cb: () => void) => setTimeout(cb, 0),
+      cancelAnimationFrame: (id: number) => clearTimeout(id),
       go: {
         main: {
           App: {
@@ -115,5 +117,120 @@ startxref
       .map((item) => ('str' in item ? item.str : ''))
       .join('');
     expect(extractedText).toBe('■コンタクト');
+  });
+
+  it('renders high-res region of a PDF page onto target canvas and utilizes caching', async () => {
+    clearPDFDocumentCache();
+    const base64Pdf = btoa(MINIMAL_PDF_TEXT);
+    (globalThis as Record<string, unknown>)['window'] = {
+      requestAnimationFrame: (cb: () => void) => setTimeout(cb, 0),
+      cancelAnimationFrame: (id: number) => clearTimeout(id),
+      go: {
+        main: {
+          App: {
+            GetPDFBase64: async () => base64Pdf,
+          },
+        },
+      },
+    };
+
+    const createMockContext = () => {
+      const base: Record<string, unknown> = {
+        canvas: null as unknown,
+        fillStyle: '',
+        fillRect: vi.fn(),
+        drawImage: vi.fn(),
+        save: vi.fn(),
+        restore: vi.fn(),
+        transform: vi.fn(),
+        scale: vi.fn(),
+        translate: vi.fn(),
+        beginPath: vi.fn(),
+        clip: vi.fn(),
+        getTransform: vi.fn().mockReturnValue({a: 1, b: 0, c: 0, d: 1, e: 0, f: 0}),
+        resetTransform: vi.fn(),
+        createImageData: vi.fn().mockReturnValue({data: []}),
+        imageSmoothingEnabled: false,
+        imageSmoothingQuality: 'low',
+      };
+      return new Proxy(base, {
+        get(target, prop) {
+          if (prop in target) {
+            return target[prop as string];
+          }
+          return vi.fn();
+        },
+      });
+    };
+
+    const offscreenCtx = createMockContext();
+    const offscreenCanvasObj = {
+      width: 0,
+      height: 0,
+      getContext: () => offscreenCtx,
+    };
+    (offscreenCtx as Record<string, unknown>).canvas = offscreenCanvasObj;
+
+    (globalThis as Record<string, unknown>)['document'] = {
+      createElement: (tag: string) => {
+        if (tag === 'canvas') {
+          return offscreenCanvasObj;
+        }
+        return {};
+      },
+    };
+
+    const targetCtx = createMockContext();
+    const targetCanvas = {
+      width: 560,
+      height: 400,
+      getContext: vi.fn().mockReturnValue(targetCtx),
+    } as unknown as HTMLCanvasElement;
+    (targetCtx as Record<string, unknown>).canvas = targetCanvas;
+
+    // 1回目のレンダリング
+    await renderHighResPageRegion({
+      canvas: targetCanvas,
+      sourceId: 'src_test_region',
+      pageNumber: 1,
+      rotation: 0,
+      region: {
+        xPercent: 0.60,
+        yPercent: 0.00,
+        widthPercent: 0.40,
+        heightPercent: 0.28,
+      },
+      baseWidth: 1400,
+    });
+
+    expect(targetCtx.fillRect).toHaveBeenCalled();
+    expect(targetCtx.drawImage).toHaveBeenCalled();
+
+    // 呼び出しパラメータの確認 (アスペクト比を維持して切り出され、ターゲットCanvasに描画されたこと)
+    const drawImageMock = targetCtx.drawImage as ReturnType<typeof vi.fn>;
+    const callArgs = drawImageMock.mock.calls[0];
+    expect(callArgs.length).toBe(9);
+    // [image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight]
+    expect(callArgs[5]).toBe(0); // dx
+    expect(callArgs[6]).toBe(0); // dy
+    expect(callArgs[7]).toBe(560); // dWidth
+    expect(callArgs[8]).toBe(400); // dHeight
+
+    // 2回目のレンダリング (キャッシュヒット)
+    drawImageMock.mockClear();
+    await renderHighResPageRegion({
+      canvas: targetCanvas,
+      sourceId: 'src_test_region',
+      pageNumber: 1,
+      rotation: 0,
+      region: {
+        xPercent: 0.60,
+        yPercent: 0.00,
+        widthPercent: 0.40,
+        heightPercent: 0.28,
+      },
+      baseWidth: 1400,
+    });
+    expect(drawImageMock).toHaveBeenCalledTimes(1);
   });
 });
