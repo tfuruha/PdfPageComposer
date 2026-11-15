@@ -277,4 +277,31 @@ describe('editorStore', () => {
     expect(state.previewPageId).toBeNull();
     expect(state.thumbnailSize).toBe('large'); // preserved
   });
+
+  it('builds export specs for all pages and for selected pages in workspace display order', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A, SAMPLE_PDF_B]);
+    const pages = get(store).pages;
+
+    // Rotate docA page 3 (index 2) by 90 degrees and docB page 1 (index 3) by 180 degrees
+    store.rotatePages([pages[2].id], 90);
+    store.rotatePages([pages[3].id], 90);
+    store.rotatePages([pages[3].id], 90);
+
+    // Clear selection -> selected specs should be empty while full export keeps all 5 pages
+    store.clearSelection();
+    expect(store.buildSelectedExportSpecs()).toEqual([]);
+    expect(store.buildExportSpecs()).toHaveLength(5);
+
+    // Non-contiguous toggle selection in reverse click order (index 3 -> index 2 -> index 0)
+    store.selectPage(pages[3].id, 'single');
+    store.selectPage(pages[2].id, 'toggle');
+    store.selectPage(pages[0].id, 'toggle');
+
+    // Must export in workspace display order (index 0, 2, 3), preserving rotations
+    expect(store.buildSelectedExportSpecs()).toEqual([
+      {sourceId: 'src_1', pageNumber: 1, rotation: 0},
+      {sourceId: 'src_1', pageNumber: 3, rotation: 90},
+      {sourceId: 'src_2', pageNumber: 1, rotation: 180},
+    ]);
+  });
 });

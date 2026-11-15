@@ -34,6 +34,7 @@ PdfPageComposer は、Wails v2、Go (`pdfcpu`)、Svelte (TypeScript + `pdfjs-dis
   - モーダル表示による詳細確認（前後ページ移動、50%〜200%ズーム、回転、削除）
 - **ロスレス PDF 出力**
   - バックエンドの純 Go ライブラリ `pdfcpu` により、ベクター品質・解像度を維持したまま単一 PDF として合成・保存
+  - 全ページ出力に加え、「PDFを出力」横の「▼」メニューから **選択中のページのみ** の抽出・保存に対応
 
 ---
 
@@ -42,6 +43,8 @@ PdfPageComposer は、Wails v2、Go (`pdfcpu`)、Svelte (TypeScript + `pdfjs-dis
 | キー | 動作 |
 | :--- | :--- |
 | `Ctrl + N` | 新しい作業を開始（新規作成・確認ダイアログ付き） |
+| `Ctrl + S` | 全ページをPDF出力 |
+| `Ctrl + Shift + S` | 選択中のページのみをPDF出力 |
 | `←` / `→` | 選択ページを前後に移動 |
 | `Shift + ←` / `→` | 選択範囲を前後に拡張 / 縮小 |
 | `Ctrl + X` | 選択したページを切り取り |

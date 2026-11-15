@@ -96,9 +96,13 @@ func (a *App) ExportPDF(req pdfcomposer.ExportRequest) (string, error) {
 
 	outPath := strings.TrimSpace(req.OutputPath)
 	if outPath == "" {
+		defaultFilename := strings.TrimSpace(req.DefaultFilename)
+		if defaultFilename == "" {
+			defaultFilename = "composed.pdf"
+		}
 		selectedPath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 			Title:           "結合・編集したPDFを保存",
-			DefaultFilename: "composed.pdf",
+			DefaultFilename: defaultFilename,
 			Filters: []runtime.FileFilter{
 				{
 					DisplayName: "PDF Files (*.pdf)",

@@ -27,8 +27,9 @@ type PageSpec struct {
 
 // ExportRequest はPDF合成出力リクエストを表す。
 type ExportRequest struct {
-	OutputPath string     `json:"outputPath"`
-	Pages      []PageSpec `json:"pages"`
+	OutputPath      string     `json:"outputPath"`
+	DefaultFilename string     `json:"defaultFilename,omitempty"`
+	Pages           []PageSpec `json:"pages"`
 }
 ```
 

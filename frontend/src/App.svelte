@@ -14,7 +14,7 @@
   import Toolbar from './lib/components/Toolbar.svelte';
   import {clearPDFDocumentCache} from './lib/pdf/pdfRenderer';
   import {activeSourceList, editorStore} from './lib/state/editorStore';
-  import type {SourcePDF} from './lib/types';
+  import type {PageSpec, SourcePDF} from './lib/types';
 
   let unsubscribeFileDrop: (() => void) | null = null;
   let isFileOrderModalOpen = false;
@@ -132,9 +132,12 @@
     void handleNewProject();
   }
 
-  async function handleExportPDF(): Promise<void> {
-    const pages = editorStore.buildExportSpecs();
-    if (pages.length === 0) {
+  async function executeExport(
+    pages: PageSpec[],
+    defaultFilename: string,
+    successMessage: (savedPath: string, count: number) => string,
+  ): Promise<void> {
+    if (pages.length === 0 || $editorStore.isBusy) {
       return;
     }
 
@@ -143,12 +146,13 @@
     try {
       const savedPath = await exportComposedPDF({
         outputPath: '',
+        defaultFilename,
         pages,
       });
       if (savedPath) {
         editorStore.setNotice({
           type: 'success',
-          message: `PDFを保存しました: ${savedPath}`,
+          message: successMessage(savedPath, pages.length),
         });
       }
     } catch (err: unknown) {
@@ -159,6 +163,20 @@
     } finally {
       editorStore.setBusy(false);
     }
+  }
+
+  async function handleExportPDF(): Promise<void> {
+    const pages = editorStore.buildExportSpecs();
+    await executeExport(pages, 'composed.pdf', (savedPath) => `PDFを保存しました: ${savedPath}`);
+  }
+
+  async function handleExportSelectedPDF(): Promise<void> {
+    const pages = editorStore.buildSelectedExportSpecs();
+    await executeExport(
+      pages,
+      'composed_selected.pdf',
+      (savedPath, count) => `選択した ${count} ページを保存しました: ${savedPath}`,
+    );
   }
 
   function handleGlobalKeyDown(event: KeyboardEvent): void {
@@ -176,6 +194,21 @@
 
     const isModalOpen = $editorStore.previewPageId !== null;
     const isCtrlOrMeta = event.ctrlKey || event.metaKey;
+
+    if (isCtrlOrMeta && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (isModalOpen || isAboutModalOpen || $editorStore.isBusy) {
+        return;
+      }
+      if (event.shiftKey) {
+        if ($editorStore.selectedIds.length > 0) {
+          void handleExportSelectedPDF();
+        }
+      } else if ($editorStore.pages.length > 0) {
+        void handleExportPDF();
+      }
+      return;
+    }
 
     if (isCtrlOrMeta && event.key.toLowerCase() === 'n' && !isModalOpen) {
       event.preventDefault();
@@ -325,6 +358,7 @@
     onInsertPDFAfter={handleInsertAfterSelection}
     onOpenFileOrder={handleOpenFileOrder}
     onExportPDF={handleExportPDF}
+    onExportSelectedPDF={handleExportSelectedPDF}
     onOpenAbout={handleOpenAbout}
   />
 
@@ -365,7 +399,7 @@
         </button>
       </div>
       <div class="subbar-hint">
-        ドラッグで並び替え / [Ctrl+N]新規作成 / [Ctrl+X]切取・[Ctrl+V]貼付 / [Space]拡大 / [R][Shift+R]回転 / [Shift+矢印]範囲選択 / [Del]削除
+        ドラッグで並び替え / [Ctrl+N]新規作成 / [Ctrl+S]出力 / [Ctrl+X]切取・[Ctrl+V]貼付 / [Space]拡大 / [R][Shift+R]回転 / [Shift+矢印]範囲選択 / [Del]削除
       </div>
     </div>
 

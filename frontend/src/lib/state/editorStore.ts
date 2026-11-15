@@ -670,14 +670,32 @@ export function createEditorStore() {
     return Math.max(...indices) + 1;
   }
 
-  /** Builds the ordered PageSpec array for exporting via the Go backend. */
+  /** Converts a workspace PageItem into a backend PageSpec payload. */
+  function toPageSpec(page: PageItem): PageSpec {
+    return {
+      sourceId: page.sourceId,
+      pageNumber: page.originalPage,
+      rotation: page.rotation,
+    };
+  }
+
+  /** Builds the ordered PageSpec array for exporting all workspace pages via the Go backend. */
   function buildExportSpecs(): PageSpec[] {
     const state = get(store);
-    return state.pages.map((p) => ({
-      sourceId: p.sourceId,
-      pageNumber: p.originalPage,
-      rotation: p.rotation,
-    }));
+    return state.pages.map(toPageSpec);
+  }
+
+  /**
+   * Builds the ordered PageSpec array for exporting only the currently selected pages,
+   * preserving their workspace display order regardless of selection click order.
+   */
+  function buildSelectedExportSpecs(): PageSpec[] {
+    const state = get(store);
+    if (state.selectedIds.length === 0) {
+      return [];
+    }
+    const selectedSet = new Set(state.selectedIds);
+    return state.pages.filter((p) => selectedSet.has(p.id)).map(toPageSpec);
   }
 
   function resetForTests(): void {
@@ -709,6 +727,7 @@ export function createEditorStore() {
     setNotice,
     getSelectionInsertionIndex,
     buildExportSpecs,
+    buildSelectedExportSpecs,
     resetForTests,
   };
 }

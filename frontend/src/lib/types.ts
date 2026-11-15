@@ -33,6 +33,7 @@ export interface PageSpec {
 
 export interface ExportRequest {
   readonly outputPath: string;
+  readonly defaultFilename?: string;
   readonly pages: PageSpec[];
 }
 
