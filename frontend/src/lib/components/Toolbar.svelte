@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {onDestroy, onMount} from 'svelte';
   import {
     canRedo,
     canUndo,
@@ -14,12 +15,64 @@
   export let onInsertPDFAfter: () => void;
   export let onOpenFileOrder: () => void;
   export let onExportPDF: () => void;
+  export let onExportSelectedPDF: () => void;
   export let onOpenAbout: () => void;
+
+  let isExportMenuOpen = false;
+  let exportMenuWrapper: HTMLElement | null = null;
+
+  $: if ($editorStore.isBusy || $editorStore.pages.length === 0) {
+    isExportMenuOpen = false;
+  }
 
   function handleSizeChange(event: Event): void {
     const select = event.currentTarget as HTMLSelectElement;
     editorStore.setThumbnailSize(select.value as ThumbnailSize);
   }
+
+  function handleMainExportClick(): void {
+    isExportMenuOpen = false;
+    onExportPDF();
+  }
+
+  function toggleExportMenu(): void {
+    isExportMenuOpen = !isExportMenuOpen;
+  }
+
+  function handleExportSelectedClick(): void {
+    if (!$hasSelection || $editorStore.isBusy) {
+      return;
+    }
+    isExportMenuOpen = false;
+    onExportSelectedPDF();
+  }
+
+  function handleWindowPointerDown(event: PointerEvent): void {
+    if (!isExportMenuOpen || !exportMenuWrapper) {
+      return;
+    }
+    if (!exportMenuWrapper.contains(event.target as Node)) {
+      isExportMenuOpen = false;
+    }
+  }
+
+  function handleWindowKeyDown(event: KeyboardEvent): void {
+    if (isExportMenuOpen && event.key === 'Escape') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      isExportMenuOpen = false;
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('pointerdown', handleWindowPointerDown);
+    window.addEventListener('keydown', handleWindowKeyDown);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('pointerdown', handleWindowPointerDown);
+    window.removeEventListener('keydown', handleWindowKeyDown);
+  });
 </script>
 
 <header class="toolbar">
@@ -168,15 +221,53 @@
       </select>
     </label>
 
-    <button
-      type="button"
-      class="btn btn-primary"
-      on:click={onExportPDF}
-      disabled={$editorStore.isBusy || $editorStore.pages.length === 0}
-      title="現在のページ順・回転状態でPDFファイルを保存します"
-    >
-      PDFを出力
-    </button>
+    <div class="split-btn-wrapper" bind:this={exportMenuWrapper}>
+      <div class="split-btn" role="group" aria-label="PDF出力操作">
+        <button
+          type="button"
+          class="btn btn-primary split-btn-main"
+          on:click={handleMainExportClick}
+          disabled={$editorStore.isBusy || $editorStore.pages.length === 0}
+          title="全ページを現在の並び順・回転状態でPDF保存します (Ctrl+S)"
+        >
+          PDFを出力
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary split-btn-toggle"
+          on:click={toggleExportMenu}
+          disabled={$editorStore.isBusy || $editorStore.pages.length === 0}
+          aria-haspopup="menu"
+          aria-expanded={isExportMenuOpen}
+          aria-label="出力オプションを開く"
+          title="出力オプション（選択中のページを出力）"
+        >
+          <svg class="caret-icon" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <path d="M2.5 4.25L6 7.75L9.5 4.25H2.5Z" />
+          </svg>
+        </button>
+      </div>
+
+      {#if isExportMenuOpen}
+        <div class="export-menu" role="menu" aria-label="PDF出力メニュー">
+          <button
+            type="button"
+            class="export-menu-item"
+            role="menuitem"
+            disabled={$editorStore.isBusy || !$hasSelection}
+            on:click={handleExportSelectedClick}
+            title={$hasSelection
+              ? '選択中のページのみを1つのPDFファイルとして出力します (Ctrl+Shift+S)'
+              : '出力するページを選択してください'}
+          >
+            <span class="export-menu-label">
+              選択中のページを出力{#if $editorStore.selectedIds.length > 0} ({$editorStore.selectedIds.length}ページ){:else}（未選択）{/if}
+            </span>
+            <span class="export-menu-shortcut">Ctrl+Shift+S</span>
+          </button>
+        </div>
+      {/if}
+    </div>
 
     <button
       type="button"
@@ -292,5 +383,81 @@
     width: 1.15rem;
     height: 1.15rem;
     display: block;
+  }
+
+  .split-btn-wrapper {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .split-btn {
+    display: inline-flex;
+    align-items: stretch;
+  }
+
+  .split-btn-main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .split-btn-toggle {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.35);
+    padding: 0.38rem 0.45rem;
+  }
+
+  .caret-icon {
+    width: 0.72rem;
+    height: 0.72rem;
+    display: block;
+  }
+
+  .export-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 260px;
+    background: var(--surface-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.14);
+    padding: 0.3rem;
+    z-index: 50;
+  }
+
+  .export-menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.48rem 0.65rem;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.12s ease;
+  }
+
+  .export-menu-item:hover:not(:disabled) {
+    background: var(--selected-bg);
+    color: var(--accent-color);
+  }
+
+  .export-menu-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .export-menu-shortcut {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-weight: 400;
   }
 </style>
