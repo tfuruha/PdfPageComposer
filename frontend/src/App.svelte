@@ -320,8 +320,29 @@
     }
   }
 
+  function isExternalFileDrag(event: DragEvent): boolean {
+    const types = event.dataTransfer?.types;
+    if (!types) {
+      return false;
+    }
+    return Array.from(types).some((t) => t === 'Files' || t === 'text/uri-list');
+  }
+
+  function handleGlobalDragOver(event: DragEvent): void {
+    event.preventDefault();
+    if (isExternalFileDrag(event) && event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  function handleGlobalDrop(event: DragEvent): void {
+    event.preventDefault();
+  }
+
   onMount(() => {
     window.addEventListener('keydown', handleGlobalKeyDown);
+    window.addEventListener('dragover', handleGlobalDragOver);
+    window.addEventListener('drop', handleGlobalDrop);
 
     unsubscribeFileDrop = subscribeToFileDrop(
       (sources: SourcePDF[]) => {
@@ -347,6 +368,8 @@
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleGlobalKeyDown);
+    window.removeEventListener('dragover', handleGlobalDragOver);
+    window.removeEventListener('drop', handleGlobalDrop);
     unsubscribeFileDrop?.();
   });
 </script>

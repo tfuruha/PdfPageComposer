@@ -2,7 +2,8 @@
   export let onSelectFiles: () => void;
 </script>
 
-<div class="empty-dropzone">
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="empty-dropzone" on:dragover|preventDefault on:drop|preventDefault>
   <div class="dropzone-card">
     <div class="dropzone-icon" aria-hidden="true">📄</div>
     <h2>PDFファイルをここへドラッグ＆ドロップ</h2>

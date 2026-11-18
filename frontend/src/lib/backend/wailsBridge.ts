@@ -14,6 +14,10 @@ interface WailsAppBindings {
 
 interface WailsRuntime {
   EventsOn(eventName: string, callback: (...data: unknown[]) => void): () => void;
+  OnFileDrop?(
+    callback: (x: number, y: number, paths: string[]) => void,
+    useDropTarget?: boolean,
+  ): void;
 }
 
 declare global {
@@ -93,6 +97,10 @@ export function subscribeToFileDrop(
   if (!runtime?.EventsOn) {
     return () => {};
   }
+
+  // Wails JSランタイムのdragover/dropデフォルト抑止とWebView2向けResolveFilePathsを有効化する。
+  // なおOnFileDropOffはGo側(app.go)のwails:file-dropリスナーまで解除するためクリーンアップでは呼ばない。
+  runtime.OnFileDrop?.(() => {}, false);
 
   const offDropped = runtime.EventsOn('pdf:files-dropped', (data: unknown) => {
     if (Array.isArray(data)) {
