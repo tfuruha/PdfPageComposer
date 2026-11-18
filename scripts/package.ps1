@@ -6,7 +6,7 @@
 [CmdletBinding()]
 param(
     [switch]$BuildIfNeeded = $true,
-    [string]$Version = "1.0.2"
+    [string]$Version = "1.0.3"
 )
 
 $ErrorActionPreference = "Stop"
