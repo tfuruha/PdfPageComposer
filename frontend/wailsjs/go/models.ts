@@ -18,6 +18,7 @@ export namespace pdfcomposer {
 	}
 	export class ExportRequest {
 	    outputPath: string;
+	    defaultFilename?: string;
 	    pages: PageSpec[];
 	
 	    static createFrom(source: any = {}) {
@@ -27,6 +28,7 @@ export namespace pdfcomposer {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.outputPath = source["outputPath"];
+	        this.defaultFilename = source["defaultFilename"];
 	        this.pages = this.convertValues(source["pages"], PageSpec);
 	    }
 	
