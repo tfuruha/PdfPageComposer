@@ -1,5 +1,5 @@
 <script lang="ts">
-  import {onDestroy} from 'svelte';
+  import {onDestroy, onMount} from 'svelte';
   import {editorStore} from '../state/editorStore';
   import {getSourceAccentColor} from '../types';
   import PageCard from './PageCard.svelte';
@@ -17,6 +17,14 @@
     medium: '250px',
     large: '400px',
   } as const;
+
+  // ドラッグ中に Undo や削除でページ配列が変わった場合、残留状態を安全に解除する
+  $: if (draggedIds.length > 0) {
+    const existingIds = new Set($editorStore.pages.map((p) => p.id));
+    if (draggedIds.some((id) => !existingIds.has(id))) {
+      handleDragEnd();
+    }
+  }
 
   function startAutoScroll(): void {
     if (autoScrollRafId !== null) {
@@ -66,6 +74,10 @@
   }
 
   function handleDragStartCard(event: DragEvent, pageId: string): void {
+    if ($editorStore.isBusy) {
+      event.preventDefault();
+      return;
+    }
     const currentSelected = $editorStore.selectedIds;
     if (currentSelected.includes(pageId)) {
       draggedIds = [...currentSelected];
@@ -105,7 +117,7 @@
   function handleDrop(event: DragEvent): void {
     event.preventDefault();
     stopAutoScroll();
-    if (draggedIds.length > 0 && dropTargetIndex !== null) {
+    if (!$editorStore.isBusy && draggedIds.length > 0 && dropTargetIndex !== null) {
       editorStore.movePages(draggedIds, dropTargetIndex);
     }
     draggedIds = [];
@@ -118,7 +130,12 @@
     dropTargetIndex = null;
   }
 
+  onMount(() => {
+    window.addEventListener('blur', handleDragEnd);
+  });
+
   onDestroy(() => {
+    window.removeEventListener('blur', handleDragEnd);
     stopAutoScroll();
   });
 </script>
@@ -151,6 +168,7 @@
         <button
           type="button"
           class="insert-slot-btn left"
+          disabled={$editorStore.isBusy}
           title={`ページ ${index + 1} の前に別のPDFを挿入`}
           on:click|stopPropagation={() => onInsertPDFAt(index)}
           on:dragover|stopPropagation={(e) => handleDragOverSlot(e, index)}
@@ -164,13 +182,18 @@
           isSelected={$editorStore.selectedIds.includes(page.id)}
           isCut={$editorStore.cutPageIds.includes(page.id)}
           isFocused={$editorStore.focusPageId === page.id}
+          isBusy={$editorStore.isBusy}
           thumbnailSize={$editorStore.thumbnailSize}
           {sourceAccentColor}
           {isDiscontinuous}
           {prevPageNumber}
           onSelect={(id, mode) => editorStore.selectPage(id, mode)}
           onPreview={(id) => editorStore.openPreview(id)}
-          onRotate={(id, delta) => editorStore.rotatePages([id], delta)}
+          onRotate={(id, delta) => {
+            if (!$editorStore.isBusy) {
+              editorStore.rotatePages([id], delta);
+            }
+          }}
           onDragStartCard={handleDragStartCard}
         />
 
@@ -178,6 +201,7 @@
           <button
             type="button"
             class="insert-slot-btn right"
+            disabled={$editorStore.isBusy}
             title="末尾に別のPDFを挿入"
             on:click|stopPropagation={() => onInsertPDFAt(index + 1)}
             on:dragover|stopPropagation={(e) => handleDragOverSlot(e, index + 1)}

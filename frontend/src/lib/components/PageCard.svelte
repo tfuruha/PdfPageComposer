@@ -1,6 +1,10 @@
 <script lang="ts">
   import {onDestroy, onMount} from 'svelte';
-  import {renderHighResPageRegion, renderPageToCanvas} from '../pdf/pdfRenderer';
+  import {
+    cancelCanvasRender,
+    renderHighResPageRegion,
+    renderPageToCanvas,
+  } from '../pdf/pdfRenderer';
   import type {PageItem, SelectionMode, ThumbnailSize} from '../types';
 
   export let page: PageItem;
@@ -8,6 +12,7 @@
   export let isSelected: boolean;
   export let isCut: boolean = false;
   export let isFocused: boolean = false;
+  export let isBusy: boolean = false;
   export let thumbnailSize: ThumbnailSize;
   export let sourceAccentColor: string = '#2563eb';
   export let isDiscontinuous: boolean = false;
@@ -26,6 +31,7 @@
   let observer: IntersectionObserver | null = null;
   let showLoupe = false;
   let lastRenderKey = '';
+  let thumbnailRenderSeq = 0;
   let loupeRenderSeq = 0;
   let isLoupeHighResLoading = false;
 
@@ -71,6 +77,7 @@
       return;
     }
     lastRenderKey = renderKey;
+    const currentSeq = ++thumbnailRenderSeq;
     isRendering = true;
     renderError = null;
     try {
@@ -82,13 +89,18 @@
         targetWidth: width,
         targetHeight: height,
       });
-      if (showLoupe) {
+      if (currentSeq === thumbnailRenderSeq && showLoupe) {
         void updateLoupe();
       }
     } catch (err: unknown) {
-      renderError = err instanceof Error ? err.message : '描画エラー';
+      if (currentSeq === thumbnailRenderSeq) {
+        lastRenderKey = '';
+        renderError = err instanceof Error ? err.message : '描画エラー';
+      }
     } finally {
-      isRendering = false;
+      if (currentSeq === thumbnailRenderSeq) {
+        isRendering = false;
+      }
     }
   }
 
@@ -179,6 +191,7 @@
   function handleKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
+      event.stopPropagation();
       onPreview(page.id);
     }
   }
@@ -193,6 +206,9 @@
         for (const entry of entries) {
           if (entry.isIntersecting) {
             isVisible = true;
+            observer?.disconnect();
+            observer = null;
+            break;
           }
         }
       },
@@ -203,6 +219,15 @@
 
   onDestroy(() => {
     observer?.disconnect();
+    observer = null;
+    thumbnailRenderSeq += 1;
+    loupeRenderSeq += 1;
+    if (canvasElement) {
+      cancelCanvasRender(canvasElement);
+    }
+    if (loupeCanvas) {
+      cancelCanvasRender(loupeCanvas);
+    }
   });
 </script>
 
@@ -282,6 +307,7 @@
       <button
         type="button"
         class="hover-btn"
+        disabled={isBusy}
         title="このページを左に90度回転"
         on:click|stopPropagation={() => onRotate(page.id, -90)}
       >
@@ -298,6 +324,7 @@
       <button
         type="button"
         class="hover-btn"
+        disabled={isBusy}
         title="このページを右に90度回転"
         on:click|stopPropagation={() => onRotate(page.id, 90)}
       >

@@ -9,7 +9,9 @@ Linux および Windows の両環境で動作するPDF編集デスクトップ�
 **解決策**:
 - **PDFの構造操作（結合・ページ抽出・回転・保存）**: 純Goライブラリである `pdfcpu` を用いてバックエンドで実行する。
 - **PDFのページプレビュー描画**: フロントエンドの `pdfjs-dist` (PDF.js) を用い、WebView内の `<canvas>` に直接描画する。
-- **PDFバイナリ供給**: Wails の `AssetServer.Middleware` を活用し、登録されたローカルPDFファイルを `/local-pdf/{sourceId}` エンドポイントから `http.ServeFile` でストリーミング配信する。これにより Base64 エンコードによるメモリ膨張や IPC ボトルネックを回避する。
+- **PDFバイナリ供給**:
+  - Wails WebView 上のカスタム URI スキーム（`wails://`）でも確実に PDF.js へバイナリを渡せるよう、フロントエンドは Wails バインディング `GetPDFBase64(sourceId)` を優先利用し、`window.go` 非存在時のプレビュー環境では Wails の `AssetServer.Middleware` が提供する `/local-pdf/{sourceId}` エンドポイント（`http.ServeFile`）へフォールバックする。
+  - なお、`GetPDFBase64` 経路ではバイナリ＋Base64文字列＋デコード済み `Uint8Array` が一時的にメモリ上に併存するため、大容量PDFの連続読み込み時は `ClearSources()` / `resetAll()` および `clearPDFDocumentCache()` によって不要キャッシュを速やかに解放する設計としている。
 
 ---
 
@@ -31,9 +33,9 @@ sequenceDiagram
         User-->>FE: 順序確定
     end
     FE->>FE: editorStore に PageItem[] を生成・追加
-    FE->>Wails: GET /local-pdf/{sourceId} (PDF.js)
-    Wails->>BE: ServePDFFile(w, r, sourceId)
-    BE-->>FE: PDF バイナリストリーム
+    FE->>Wails: GetPDFBase64(sourceId) (非Wails環境では GET /local-pdf/{sourceId})
+    Wails->>BE: ReadSourceBytes / ServeFile(sourceId)
+    BE-->>FE: PDF バイナリ
     FE->>FE: Canvas にサムネイル / 拡大プレビュー描画
     User->>FE: 並び替え・削除・回転・別PDF挿入・ファイル単位再配置 (Undo/Redo管理)
     User->>FE: 「PDFを出力」クリック
@@ -55,9 +57,9 @@ sequenceDiagram
 | `ClearSources()` | なし | なし | バックエンドに登録された元PDFの管理情報（`sources` マップおよび `pathMap`）をすべてクリアし、内部IDカウンタを初期化する |
 
 ### 3.2 ローカルPDF配信エンドポイント
-- **パス**: `GET /local-pdf/{sourceId}`
+- **パス**: `GET /local-pdf/{sourceId}`（`GET` / `HEAD` のみ許可、その他のメソッドは `405 Method Not Allowed`）
 - **挙動**:
-  - `sourceId` に対応する登録済みローカルPDFファイルパスを `Service.GetSourcePath(sourceId)` で解決し、`http.ServeFile` で返す。
+  - `sourceId` に対応する登録済みローカルPDFファイルパスを `Service.GetSource(sourceId)` で解決し、`http.ServeFile`（`Cache-Control: no-store`）で返す。
   - 未登録の `sourceId` が指定された場合は `404 Not Found` を返す（任意のファイルパス読み取りを防ぐセキュリティ境界）。
 
 ---

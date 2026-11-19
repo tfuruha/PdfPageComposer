@@ -1,25 +1,54 @@
 <script lang="ts">
-  import {onDestroy, onMount} from 'svelte';
+  import {tick} from 'svelte';
   import {getSourceAccentColor, type SourcePDF} from '../types';
 
   export let isOpen = false;
   export let mode: 'import' | 'reorder' = 'import';
   export let initialSources: readonly SourcePDF[] = [];
+  export let pageCountBySourceId: Readonly<Record<string, number>> = {};
   export let onConfirm: (ordered: SourcePDF[]) => void;
   export let onCancel: () => void;
 
+  let dialogElement: HTMLElement | null = null;
+  let wasOpen = false;
+  let openedSourcesSnapshot: SourcePDF[] = [];
   let currentSources: SourcePDF[] = [];
   let draggedIndex: number | null = null;
   let dragOverIndex: number | null = null;
 
-  // Sync internal list whenever initialSources or isOpen updates
-  $: if (isOpen) {
-    currentSources = [...initialSources];
+  function deduplicateSources(sources: readonly SourcePDF[]): SourcePDF[] {
+    const seen = new Set<string>();
+    const unique: SourcePDF[] = [];
+    for (const src of sources) {
+      if (!seen.has(src.id)) {
+        seen.add(src.id);
+        unique.push(src);
+      }
+    }
+    return unique;
+  }
+
+  // モーダルが閉→開に遷移した瞬間のみリストを初期化する（編集中に外部通知等でリセットされないようにする）
+  $: if (isOpen && !wasOpen) {
+    wasOpen = true;
+    const deduped = deduplicateSources(initialSources);
+    openedSourcesSnapshot = deduped;
+    currentSources = [...deduped];
+    draggedIndex = null;
+    dragOverIndex = null;
+    void tick().then(() => {
+      dialogElement?.focus();
+    });
+  } else if (!isOpen && wasOpen) {
+    wasOpen = false;
     draggedIndex = null;
     dragOverIndex = null;
   }
 
-  $: totalPages = currentSources.reduce((sum, s) => sum + s.pageCount, 0);
+  $: totalPages = currentSources.reduce(
+    (sum, s) => sum + (mode === 'reorder' ? (pageCountBySourceId[s.id] ?? s.pageCount) : s.pageCount),
+    0,
+  );
 
   function moveItem(fromIndex: number, toIndex: number): void {
     if (
@@ -64,7 +93,7 @@
   }
 
   function resetOrder(): void {
-    currentSources = [...initialSources];
+    currentSources = [...openedSourcesSnapshot];
   }
 
   function handleConfirm(): void {
@@ -72,6 +101,11 @@
       return;
     }
     onConfirm(currentSources);
+  }
+
+  /** 親のキーボードコントローラから Enter 確定を呼び出すための公開メソッド。 */
+  export function confirmCurrentOrder(): void {
+    handleConfirm();
   }
 
   function handleCancel(): void {
@@ -88,6 +122,9 @@
   }
 
   function handleDragOver(index: number, event: DragEvent): void {
+    if (draggedIndex === null) {
+      return;
+    }
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = 'move';
@@ -102,8 +139,11 @@
   }
 
   function handleDrop(index: number, event: DragEvent): void {
+    if (draggedIndex === null) {
+      return;
+    }
     event.preventDefault();
-    if (draggedIndex !== null && draggedIndex !== index) {
+    if (draggedIndex !== index) {
       moveItem(draggedIndex, index);
     }
     draggedIndex = null;
@@ -114,32 +154,6 @@
     draggedIndex = null;
     dragOverIndex = null;
   }
-
-  function handleKeyDown(event: KeyboardEvent): void {
-    if (!isOpen) {
-      return;
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      handleCancel();
-    } else if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey) {
-      const target = event.target as HTMLElement | null;
-      // Do not trigger if user is actively focusing a button with space/enter
-      if (target && target.tagName === 'BUTTON') {
-        return;
-      }
-      event.preventDefault();
-      handleConfirm();
-    }
-  }
-
-  onMount(() => {
-    window.addEventListener('keydown', handleKeyDown);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('keydown', handleKeyDown);
-  });
 </script>
 
 {#if isOpen}
@@ -149,6 +163,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
+      bind:this={dialogElement}
       class="modal-card"
       role="dialog"
       aria-modal="true"
@@ -243,7 +258,9 @@
                 <div class="file-path" title={src.filePath}>{src.filePath}</div>
               </div>
 
-              <div class="page-badge">{src.pageCount} ページ</div>
+              <div class="page-badge">
+                {mode === 'reorder' ? (pageCountBySourceId[src.id] ?? src.pageCount) : src.pageCount} ページ
+              </div>
 
               <div class="row-actions">
                 <button

@@ -3,16 +3,29 @@
  * Manages loaded PDF sources, ordered page items, multi-page selection, rotation, and modal preview.
  */
 
-import {writable, derived, get} from 'svelte/store';
+import {writable, derived, readable, get, type Readable} from 'svelte/store';
 import type {
   PageItem,
   PageSpec,
-  RotationAngle,
   SelectionMode,
   SourcePDF,
   StatusNotice,
   ThumbnailSize,
 } from '../types';
+import {
+  computeFallbackPreviewId,
+  computeRangeIds,
+  expandSourcesToPages,
+  insertPagesAt,
+  movePageItems,
+  normalizeRotationAngle,
+  reorderPageItemsBySource,
+  rotatePageItems,
+  sanitizePageReferences,
+  type PageReferenceState,
+} from './pageOperations';
+
+export {normalizeRotationAngle};
 
 const MAX_HISTORY_STEPS = 50;
 
@@ -30,6 +43,18 @@ export interface EditorState {
   readonly notice: StatusNotice | null;
   readonly past: readonly (readonly PageItem[])[];
   readonly future: readonly (readonly PageItem[])[];
+}
+
+/** ワークスペース上に存在するソースPDFとその実残存ページ数。 */
+export interface ActiveSourceEntry {
+  readonly source: SourcePDF;
+  readonly activePageCount: number;
+}
+
+interface CommitOptions {
+  readonly pushHistory?: boolean;
+  readonly past?: readonly (readonly PageItem[])[];
+  readonly future?: readonly (readonly PageItem[])[];
 }
 
 const INITIAL_STATE: EditorState = {
@@ -57,15 +82,6 @@ export function createPageItemId(): string {
   return id;
 }
 
-/** Normalizes any multiple-of-90 rotation angle into 0 | 90 | 180 | 270. */
-export function normalizeRotationAngle(deg: number): RotationAngle {
-  const normalized = ((deg % 360) + 360) % 360;
-  if (normalized === 90 || normalized === 180 || normalized === 270) {
-    return normalized;
-  }
-  return 0;
-}
-
 /** Records current pages in history stack before applying a page list mutation. */
 function pushHistory(
   past: readonly (readonly PageItem[])[],
@@ -78,9 +94,44 @@ function pushHistory(
   return nextPast;
 }
 
-/** Returns the page ID if it exists in validIds, otherwise null. */
-function sanitizePageRef(id: string | null, validIds: ReadonlySet<string>): string | null {
-  return id !== null && validIds.has(id) ? id : null;
+/**
+ * ページ配列の変更を反映する共通ヘルパー。
+ * すべてのページID参照の不変条件サニタイズと Undo/Redo 履歴管理を一元化する。
+ */
+function commitPageChange(
+  state: EditorState,
+  nextPages: readonly PageItem[],
+  overrides: Partial<PageReferenceState> & {
+    readonly sources?: Readonly<Record<string, SourcePDF>>;
+    readonly notice?: StatusNotice | null;
+  } = {},
+  options: CommitOptions = {},
+): EditorState {
+  const mergedRefs: PageReferenceState = {
+    selectedIds: overrides.selectedIds ?? state.selectedIds,
+    lastSelectedId:
+      overrides.lastSelectedId !== undefined ? overrides.lastSelectedId : state.lastSelectedId,
+    anchorPageId:
+      overrides.anchorPageId !== undefined ? overrides.anchorPageId : state.anchorPageId,
+    focusPageId:
+      overrides.focusPageId !== undefined ? overrides.focusPageId : state.focusPageId,
+    cutPageIds: overrides.cutPageIds ?? state.cutPageIds,
+    previewPageId:
+      overrides.previewPageId !== undefined ? overrides.previewPageId : state.previewPageId,
+  };
+
+  const sanitized = sanitizePageReferences(mergedRefs, nextPages);
+  const shouldPush = options.pushHistory ?? true;
+
+  return {
+    ...state,
+    sources: overrides.sources ?? state.sources,
+    pages: nextPages,
+    ...sanitized,
+    notice: overrides.notice !== undefined ? overrides.notice : state.notice,
+    past: options.past ?? (shouldPush ? pushHistory(state.past, state.pages) : state.past),
+    future: options.future ?? (shouldPush ? [] : state.future),
+  };
 }
 
 export function createEditorStore() {
@@ -98,46 +149,27 @@ export function createEditorStore() {
     let addedCount = 0;
     store.update((state) => {
       const updatedSources: Record<string, SourcePDF> = {...state.sources};
-      const createdPages: PageItem[] = [];
-
       for (const src of newSources) {
         updatedSources[src.id] = src;
-        for (let p = 1; p <= src.pageCount; p += 1) {
-          createdPages.push({
-            id: createPageItemId(),
-            sourceId: src.id,
-            sourceName: src.fileName,
-            originalPage: p,
-            rotation: 0,
-          });
-        }
       }
 
+      const createdPages = expandSourcesToPages(newSources, createPageItemId);
       if (createdPages.length === 0) {
         return state;
       }
 
       addedCount = createdPages.length;
-      const clampedIndex =
-        insertIndex === undefined
-          ? state.pages.length
-          : Math.max(0, Math.min(insertIndex, state.pages.length));
+      const nextPages = insertPagesAt(state.pages, createdPages, insertIndex);
+      const firstCreatedId = createdPages[0].id;
+      const lastCreatedId = createdPages[createdPages.length - 1].id;
 
-      const nextPages = [
-        ...state.pages.slice(0, clampedIndex),
-        ...createdPages,
-        ...state.pages.slice(clampedIndex),
-      ];
-
-      return {
-        ...state,
+      return commitPageChange(state, nextPages, {
         sources: updatedSources,
-        pages: nextPages,
         selectedIds: createdPages.map((item) => item.id),
-        lastSelectedId: createdPages[createdPages.length - 1]?.id ?? state.lastSelectedId,
-        past: pushHistory(state.past, state.pages),
-        future: [],
-      };
+        anchorPageId: firstCreatedId,
+        lastSelectedId: lastCreatedId,
+        focusPageId: lastCreatedId,
+      });
     });
 
     return addedCount;
@@ -175,11 +207,10 @@ export function createEditorStore() {
         };
       }
 
-      // Range selection ('range')
+      // Range selection ('range'): Shift+矢印と同じくアンカー起点の置換選択（伸縮可能）
       const anchorId = state.anchorPageId ?? state.lastSelectedId ?? pageId;
-      const anchorIdx = state.pages.findIndex((p) => p.id === anchorId);
-      const targetIdx = state.pages.findIndex((p) => p.id === pageId);
-      if (anchorIdx === -1 || targetIdx === -1) {
+      const rangeIds = computeRangeIds(state.pages, anchorId, pageId);
+      if (!rangeIds) {
         return {
           ...state,
           selectedIds: [pageId],
@@ -189,14 +220,9 @@ export function createEditorStore() {
         };
       }
 
-      const start = Math.min(anchorIdx, targetIdx);
-      const end = Math.max(anchorIdx, targetIdx);
-      const rangeIds = state.pages.slice(start, end + 1).map((p) => p.id);
-      const merged = Array.from(new Set([...state.selectedIds, ...rangeIds]));
-
       return {
         ...state,
-        selectedIds: merged,
+        selectedIds: rangeIds,
         lastSelectedId: pageId,
         anchorPageId: anchorId,
         focusPageId: pageId,
@@ -205,10 +231,29 @@ export function createEditorStore() {
   }
 
   function selectAll(): void {
-    store.update((state) => ({
-      ...state,
-      selectedIds: state.pages.map((p) => p.id),
-    }));
+    store.update((state) => {
+      if (state.pages.length === 0) {
+        return state;
+      }
+      const validIds = new Set(state.pages.map((p) => p.id));
+      const firstId = state.pages[0].id;
+      const lastId = state.pages[state.pages.length - 1].id;
+
+      const anchorPageId =
+        state.anchorPageId && validIds.has(state.anchorPageId) ? state.anchorPageId : firstId;
+      const focusPageId =
+        state.focusPageId && validIds.has(state.focusPageId) ? state.focusPageId : lastId;
+      const lastSelectedId =
+        state.lastSelectedId && validIds.has(state.lastSelectedId) ? state.lastSelectedId : lastId;
+
+      return {
+        ...state,
+        selectedIds: state.pages.map((p) => p.id),
+        anchorPageId,
+        focusPageId,
+        lastSelectedId,
+      };
+    });
   }
 
   function clearSelection(): void {
@@ -243,7 +288,10 @@ export function createEditorStore() {
         };
       }
 
-      const refId = state.focusPageId ?? state.lastSelectedId ?? state.selectedIds[state.selectedIds.length - 1];
+      const refId =
+        state.focusPageId ??
+        state.lastSelectedId ??
+        state.selectedIds[state.selectedIds.length - 1];
       const currentIdx = state.pages.findIndex((p) => p.id === refId);
       if (currentIdx === -1) {
         return state;
@@ -268,18 +316,22 @@ export function createEditorStore() {
 
       // Range extension (Shift + Arrow) - exact File Explorer behavior
       const anchorId = state.anchorPageId ?? refId;
-      const anchorIdx = state.pages.findIndex((p) => p.id === anchorId);
-      const safeAnchorIdx = anchorIdx === -1 ? currentIdx : anchorIdx;
-
-      const start = Math.min(safeAnchorIdx, nextIdx);
-      const end = Math.max(safeAnchorIdx, nextIdx);
-      const rangeIds = state.pages.slice(start, end + 1).map((p) => p.id);
+      const rangeIds = computeRangeIds(state.pages, anchorId, nextTarget.id);
+      if (!rangeIds) {
+        return {
+          ...state,
+          selectedIds: [nextTarget.id],
+          lastSelectedId: nextTarget.id,
+          anchorPageId: nextTarget.id,
+          focusPageId: nextTarget.id,
+        };
+      }
 
       return {
         ...state,
         selectedIds: rangeIds,
         lastSelectedId: nextTarget.id,
-        anchorPageId: state.pages[safeAnchorIdx].id,
+        anchorPageId: anchorId,
         focusPageId: nextTarget.id,
       };
     });
@@ -304,37 +356,56 @@ export function createEditorStore() {
 
   /** Pastes the cut pages after the current selection or at targetIndex (Ctrl+V). */
   function pasteCutPages(customTargetIndex?: number): void {
-    const state = get(store);
-    if (state.cutPageIds.length === 0) {
-      return;
-    }
+    store.update((state) => {
+      if (state.cutPageIds.length === 0) {
+        return state;
+      }
 
-    let insertIndex: number;
-    if (customTargetIndex !== undefined) {
-      insertIndex = customTargetIndex;
-    } else if (state.selectedIds.length > 0) {
-      const selectedSet = new Set(state.selectedIds);
-      const indices = state.pages
-        .map((p, idx) => (selectedSet.has(p.id) ? idx : -1))
-        .filter((idx) => idx !== -1);
-      insertIndex = indices.length > 0 ? Math.max(...indices) + 1 : state.pages.length;
-    } else {
-      insertIndex = state.pages.length;
-    }
+      let insertIndex: number;
+      if (customTargetIndex !== undefined) {
+        insertIndex = customTargetIndex;
+      } else if (state.selectedIds.length > 0) {
+        const selectedSet = new Set(state.selectedIds);
+        const indices = state.pages
+          .map((p, idx) => (selectedSet.has(p.id) ? idx : -1))
+          .filter((idx) => idx !== -1);
+        insertIndex = indices.length > 0 ? Math.max(...indices) + 1 : state.pages.length;
+      } else {
+        insertIndex = state.pages.length;
+      }
 
-    const cutIds = [...state.cutPageIds];
-    // Perform reorder
-    movePages(cutIds, insertIndex);
+      const {nextPages, movedIds, changed} = movePageItems(
+        state.pages,
+        state.cutPageIds,
+        insertIndex,
+      );
 
-    // Clear cut buffer and notify
-    store.update((s) => ({
-      ...s,
-      cutPageIds: [],
-      notice: {
-        type: 'success',
-        message: `${cutIds.length} ページを移動しました。`,
-      },
-    }));
+      if (!changed) {
+        return {
+          ...state,
+          cutPageIds: [],
+          notice: {
+            type: 'info',
+            message: '移動先が元の位置と同じため、カットを解除しました。',
+          },
+        };
+      }
+
+      const firstMovedId = movedIds[0] ?? null;
+      const lastMovedId = movedIds[movedIds.length - 1] ?? null;
+
+      return commitPageChange(state, nextPages, {
+        selectedIds: movedIds,
+        anchorPageId: firstMovedId,
+        lastSelectedId: lastMovedId,
+        focusPageId: lastMovedId,
+        cutPageIds: [],
+        notice: {
+          type: 'success',
+          message: `${movedIds.length} ページを移動しました。`,
+        },
+      });
+    });
   }
 
   /** Cancels the cut state without moving pages (Escape). */
@@ -357,49 +428,24 @@ export function createEditorStore() {
    */
   function movePages(pageIdsToMove: readonly string[], targetIndex: number): void {
     store.update((state) => {
-      if (pageIdsToMove.length === 0 || state.pages.length <= 1) {
-        return state;
-      }
-      const movingSet = new Set(pageIdsToMove);
-      const movingPages = state.pages.filter((p) => movingSet.has(p.id));
-      if (movingPages.length === 0) {
-        return state;
-      }
-
-      // Count how many moving items were originally positioned before targetIndex
-      const boundedTarget = Math.max(0, Math.min(targetIndex, state.pages.length));
-      let removedBeforeTarget = 0;
-      for (let i = 0; i < boundedTarget; i += 1) {
-        if (movingSet.has(state.pages[i].id)) {
-          removedBeforeTarget += 1;
-        }
-      }
-
-      const remainingPages = state.pages.filter((p) => !movingSet.has(p.id));
-      const adjustedInsertIndex = Math.max(
-        0,
-        Math.min(boundedTarget - removedBeforeTarget, remainingPages.length),
+      const {nextPages, movedIds, changed} = movePageItems(
+        state.pages,
+        pageIdsToMove,
+        targetIndex,
       );
-
-      const nextPages = [
-        ...remainingPages.slice(0, adjustedInsertIndex),
-        ...movingPages,
-        ...remainingPages.slice(adjustedInsertIndex),
-      ];
-
-      // Check whether the page order actually changed
-      const isUnchanged = nextPages.every((p, idx) => p.id === state.pages[idx]?.id);
-      if (isUnchanged) {
+      if (!changed) {
         return state;
       }
 
-      return {
-        ...state,
-        pages: nextPages,
-        selectedIds: movingPages.map((p) => p.id),
-        past: pushHistory(state.past, state.pages),
-        future: [],
-      };
+      const firstMovedId = movedIds[0] ?? null;
+      const lastMovedId = movedIds[movedIds.length - 1] ?? null;
+
+      return commitPageChange(state, nextPages, {
+        selectedIds: movedIds,
+        anchorPageId: firstMovedId,
+        lastSelectedId: lastMovedId,
+        focusPageId: lastMovedId,
+      });
     });
   }
 
@@ -410,54 +456,11 @@ export function createEditorStore() {
    */
   function reorderPagesBySourceOrder(orderedSourceIds: readonly string[]): void {
     store.update((state) => {
-      if (state.pages.length <= 1 || orderedSourceIds.length <= 1) {
+      const {nextPages, changed} = reorderPageItemsBySource(state.pages, orderedSourceIds);
+      if (!changed) {
         return state;
       }
-
-      // Group pages by sourceId while preserving internal order
-      const groups = new Map<string, PageItem[]>();
-      for (const page of state.pages) {
-        const list = groups.get(page.sourceId);
-        if (list) {
-          list.push(page);
-        } else {
-          groups.set(page.sourceId, [page]);
-        }
-      }
-
-      const nextPages: PageItem[] = [];
-      const handledSources = new Set<string>();
-
-      for (const srcId of orderedSourceIds) {
-        const items = groups.get(srcId);
-        if (items) {
-          nextPages.push(...items);
-          handledSources.add(srcId);
-        }
-      }
-
-      // Append any pages from sources that were not explicitly listed
-      for (const [srcId, items] of groups.entries()) {
-        if (!handledSources.has(srcId)) {
-          nextPages.push(...items);
-        }
-      }
-
-      // Check whether the page order actually changed
-      const isUnchanged =
-        nextPages.length === state.pages.length &&
-        nextPages.every((p, idx) => p.id === state.pages[idx]?.id);
-
-      if (isUnchanged) {
-        return state;
-      }
-
-      return {
-        ...state,
-        pages: nextPages,
-        past: pushHistory(state.past, state.pages),
-        future: [],
-      };
+      return commitPageChange(state, nextPages);
     });
   }
 
@@ -465,33 +468,11 @@ export function createEditorStore() {
   function rotatePages(pageIds: readonly string[], delta: 90 | -90): void {
     store.update((state) => {
       const targetIds = pageIds.length > 0 ? pageIds : state.selectedIds;
-      if (targetIds.length === 0) {
+      const {nextPages, changed} = rotatePageItems(state.pages, targetIds, delta);
+      if (!changed) {
         return state;
       }
-      const targetSet = new Set(targetIds);
-      let mutated = false;
-
-      const nextPages = state.pages.map((page) => {
-        if (!targetSet.has(page.id)) {
-          return page;
-        }
-        mutated = true;
-        return {
-          ...page,
-          rotation: normalizeRotationAngle(page.rotation + delta),
-        };
-      });
-
-      if (!mutated) {
-        return state;
-      }
-
-      return {
-        ...state,
-        pages: nextPages,
-        past: pushHistory(state.past, state.pages),
-        future: [],
-      };
+      return commitPageChange(state, nextPages);
     });
   }
 
@@ -508,26 +489,16 @@ export function createEditorStore() {
         return state;
       }
 
-      const validIds = new Set(nextPages.map((p) => p.id));
-      let nextPreviewId = state.previewPageId;
-      if (nextPreviewId && targetSet.has(nextPreviewId)) {
-        const oldIdx = state.pages.findIndex((p) => p.id === nextPreviewId);
-        const fallbackPage = nextPages[Math.min(oldIdx, nextPages.length - 1)];
-        nextPreviewId = fallbackPage ? fallbackPage.id : null;
-      }
+      const nextPreviewId = computeFallbackPreviewId(
+        state.pages,
+        nextPages,
+        state.previewPageId,
+        targetSet,
+      );
 
-      return {
-        ...state,
-        pages: nextPages,
-        selectedIds: state.selectedIds.filter((id) => validIds.has(id)),
-        lastSelectedId: sanitizePageRef(state.lastSelectedId, validIds),
-        anchorPageId: sanitizePageRef(state.anchorPageId, validIds),
-        focusPageId: sanitizePageRef(state.focusPageId, validIds),
-        cutPageIds: state.cutPageIds.filter((id) => validIds.has(id)),
+      return commitPageChange(state, nextPages, {
         previewPageId: nextPreviewId,
-        past: pushHistory(state.past, state.pages),
-        future: [],
-      };
+      });
     });
   }
 
@@ -540,20 +511,12 @@ export function createEditorStore() {
       const previousPages = state.past[state.past.length - 1];
       const nextPast = state.past.slice(0, state.past.length - 1);
       const nextFuture = [state.pages, ...state.future];
-      const validIds = new Set(previousPages.map((p) => p.id));
 
-      return {
-        ...state,
-        pages: previousPages,
-        selectedIds: state.selectedIds.filter((id) => validIds.has(id)),
-        lastSelectedId: sanitizePageRef(state.lastSelectedId, validIds),
-        anchorPageId: sanitizePageRef(state.anchorPageId, validIds),
-        focusPageId: sanitizePageRef(state.focusPageId, validIds),
-        cutPageIds: state.cutPageIds.filter((id) => validIds.has(id)),
-        previewPageId: sanitizePageRef(state.previewPageId, validIds),
+      return commitPageChange(state, previousPages, {}, {
+        pushHistory: false,
         past: nextPast,
         future: nextFuture,
-      };
+      });
     });
   }
 
@@ -566,40 +529,12 @@ export function createEditorStore() {
       const nextPages = state.future[0];
       const nextFuture = state.future.slice(1);
       const nextPast = pushHistory(state.past, state.pages);
-      const validIds = new Set(nextPages.map((p) => p.id));
 
-      return {
-        ...state,
-        pages: nextPages,
-        selectedIds: state.selectedIds.filter((id) => validIds.has(id)),
-        lastSelectedId: sanitizePageRef(state.lastSelectedId, validIds),
-        anchorPageId: sanitizePageRef(state.anchorPageId, validIds),
-        focusPageId: sanitizePageRef(state.focusPageId, validIds),
-        cutPageIds: state.cutPageIds.filter((id) => validIds.has(id)),
-        previewPageId: sanitizePageRef(state.previewPageId, validIds),
+      return commitPageChange(state, nextPages, {}, {
+        pushHistory: false,
         past: nextPast,
         future: nextFuture,
-      };
-    });
-  }
-
-  function clearAll(): void {
-    store.update((state) => {
-      if (state.pages.length === 0) {
-        return state;
-      }
-      return {
-        ...state,
-        pages: [],
-        selectedIds: [],
-        lastSelectedId: null,
-        anchorPageId: null,
-        focusPageId: null,
-        cutPageIds: [],
-        previewPageId: null,
-        past: pushHistory(state.past, state.pages),
-        future: [],
-      };
+      });
     });
   }
 
@@ -627,6 +562,27 @@ export function createEditorStore() {
       ...state,
       previewPageId: null,
     }));
+  }
+
+  /** 拡大プレビュー中の表示ページを前後（-1 / 1）へ移動する。 */
+  function stepPreview(direction: -1 | 1): void {
+    store.update((state) => {
+      if (state.previewPageId === null || state.pages.length === 0) {
+        return state;
+      }
+      const currentIdx = state.pages.findIndex((p) => p.id === state.previewPageId);
+      if (currentIdx === -1) {
+        return state;
+      }
+      const nextIdx = currentIdx + direction;
+      if (nextIdx < 0 || nextIdx >= state.pages.length) {
+        return state;
+      }
+      return {
+        ...state,
+        previewPageId: state.pages[nextIdx].id,
+      };
+    });
   }
 
   function setThumbnailSize(size: ThumbnailSize): void {
@@ -718,10 +674,10 @@ export function createEditorStore() {
     deletePages,
     undo,
     redo,
-    clearAll,
     resetAll,
     openPreview,
     closePreview,
+    stepPreview,
     setThumbnailSize,
     setBusy,
     setNotice,
@@ -739,19 +695,59 @@ export const canRedo = derived(editorStore, ($state) => $state.future.length > 0
 export const hasSelection = derived(editorStore, ($state) => $state.selectedIds.length > 0);
 export const hasCutPages = derived(editorStore, ($state) => $state.cutPageIds.length > 0);
 
-export const activeSourceList = derived(editorStore, ($state) => {
-  const seen = new Set<string>();
-  const list: SourcePDF[] = [];
-  for (const page of $state.pages) {
-    if (!seen.has(page.sourceId)) {
-      seen.add(page.sourceId);
-      const src = $state.sources[page.sourceId];
-      if (src) {
-        list.push(src);
-      }
-    }
-  }
-  return list;
-});
+function createActiveSourceEntriesStore(): Readable<readonly ActiveSourceEntry[]> {
+  return readable<readonly ActiveSourceEntry[]>([], (set) => {
+    let initialized = false;
+    let prevPages: readonly PageItem[] | null = null;
+    let prevSources: Readonly<Record<string, SourcePDF>> | null = null;
 
-export const uniqueSourceCount = derived(activeSourceList, ($sources) => $sources.length);
+    const unsubscribe = editorStore.subscribe(($state) => {
+      if (initialized && prevPages === $state.pages && prevSources === $state.sources) {
+        return;
+      }
+      initialized = true;
+      prevPages = $state.pages;
+      prevSources = $state.sources;
+
+      const counts = new Map<string, number>();
+      const order: string[] = [];
+      for (const page of $state.pages) {
+        const currentCount = counts.get(page.sourceId);
+        if (currentCount === undefined) {
+          order.push(page.sourceId);
+          counts.set(page.sourceId, 1);
+        } else {
+          counts.set(page.sourceId, currentCount + 1);
+        }
+      }
+
+      const entries: ActiveSourceEntry[] = [];
+      for (const sourceId of order) {
+        const src = $state.sources[sourceId];
+        if (src) {
+          entries.push({
+            source: src,
+            activePageCount: counts.get(sourceId) ?? 0,
+          });
+        }
+      }
+      set(entries);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  });
+}
+
+/**
+ * ワークスペース内のページ出現順に従ったソースPDFと残存ページ数の一覧。
+ * pages / sources の参照が変わらない状態更新（通知・選択変更等）では再発行されない。
+ */
+export const activeSourceEntries = createActiveSourceEntriesStore();
+
+export const activeSourceList = derived(activeSourceEntries, ($entries) =>
+  $entries.map((entry) => entry.source),
+);
+
+export const uniqueSourceCount = derived(activeSourceEntries, ($entries) => $entries.length);

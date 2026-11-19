@@ -37,23 +37,24 @@ type ExportRequest struct {
 
 ## 3. 主要メソッドとアルゴリズム (`internal/pdfcomposer/service.go`)
 
-### 3.1 `RegisterFile(filePath string) (SourcePDF, error)`
-1. ファイルの存在確認および拡張子チェックを行う。
-2. `pdfcpu/pkg/api.PageCountFile(filePath)` を呼び出し、有効なPDFであることの確認と総ページ数の取得を同時に行う。
-3. 既に同一絶対パスのファイルが登録されている場合は既存の `SourcePDF`（最新のページ数で更新）を返し、新規の場合は一意の `ID` を採番してスレッドセーフなマップ（`sync.RWMutex` 保護）に登録する。
+### 3.1 `RegisterFile(filePath string) (SourcePDF, error)` / `RegisterFiles(paths []string) ([]SourcePDF, error)`
+1. ファイルの存在確認および `pdfcpu/pkg/api.PageCountFile(filePath)` の呼び出しを行い、有効なPDFであることの確認と総ページ数の取得を同時に行う。
+2. 既に同一絶対パス（Windows では大文字小文字を区別しない正規化キー）のファイルが登録されている場合は既存の `SourcePDF`（最新のページ数で更新）を返し、新規の場合は一意の `ID` を採番してスレッドセーフなマップ（`sync.RWMutex` 保護）に登録する。
+3. `RegisterFiles` は同一パスが複数含まれていた場合でも重複した `SourcePDF` を返さないよう `ID` 単位でデデュープする。
 
 ### 3.2 `Compose(req ExportRequest) error`
-1. **入力バリデーション**:
-   - `len(req.Pages) == 0` の場合はエラーを返す。
-   - `req.OutputPath == ""` の場合はエラーを返す。
+1. **一括ロック検証・上書き禁止保護**:
+   - `s.mu.RLock()` を1回だけ一括取得し、スナップショットの一貫性を保ったまま全検証を行う。
+   - `len(req.Pages) == 0` または `req.OutputPath == ""` の場合はエラーを返す。
+   - 出力先 `absOut` が現在 `s.sources` に登録されているいずれかの元PDFと同一ファイル（パス正規化・Windows 大文字小文字非区別・`os.SameFile` で判定）である場合は、後続編集やプレビュー整合性のサイレント破損を防ぐためエラーを返し、別名保存を促す。
    - 各 `PageSpec` の `SourceID` が登録済みか、`PageNumber` が `1 <= PageNumber <= PageCount` の範囲内か、`Rotation` が `0, 90, 180, 270`（または負角の正規化可能値）かを検証する。
 2. **一時ディレクトリでのページ抽出・回転**:
-   - `tempDir, err := os.MkdirTemp("", "pdfcomposer-*")` を作成し、`defer os.RemoveAll(tempDir)` を設定する。
-   - `req.Pages` を順番に走査し、各要素 `i` について一時ファイル `chunk_00001.pdf` を `api.TrimFile(srcPath, chunkPath, []string{strconv.Itoa(spec.PageNumber)}, conf)` で抽出する。
-   - `normRotation := ((spec.Rotation % 360) + 360) % 360` が `0` でない場合、`api.RotateFile(chunkPath, "", normRotation, nil, conf)` を実行して該当チャンクを回転させる。
-3. **結合とアトミックな出力**:
+   - `tempDir, err := os.MkdirTemp("", "pdfpagecomposer-*")` を作成し、`defer os.RemoveAll(tempDir)` を設定する。
+   - `req.Pages` を順番に走査し、各要素 `i` について一時ファイル `page_00001.pdf` を `api.TrimFile(srcPath, chunkPath, []string{strconv.Itoa(spec.PageNumber)}, conf)` で抽出する。
+   - `NormalizeRotation(spec.Rotation)` が `0` でない場合、`api.RotateFile(chunkPath, "", normRotation, nil, conf)` を実行して該当チャンクを回転させる。
+3. **結合とアトミックな出力 (`writeFileAtomic`)**:
    - 全チャンクが1ページのみの場合はそのチャンクを、2ページ以上の場合は `api.MergeCreateFile(chunkPaths, mergedTempPath, false, conf)` で一時結合PDFを生成する。
-   - 入力元PDFと同じパスへ上書き保存された場合でも破損しないよう、一時ファイルから最終出力先 `req.OutputPath` へコピー（またはリネーム）して完了する。
+   - 最終出力先 `absOut` と同一ディレクトリに一時ファイル（`os.CreateTemp`）を作成し、`io.Copy` → `Sync()` → `Close()`（エラー検証）後に `os.Rename` でアトミックに配置する。途中で書き込み失敗した場合は一時ファイルを削除し、既存の出力先ファイルを破損・切り詰めしない。
 
 ### 3.3 `ClearSources()`
 1. スレッドセーフ（`sync.RWMutex` 排他ロック）に `s.sources` および `s.pathMap` を空のマップに再初期化し、`s.nextID = 1` にリセットする。

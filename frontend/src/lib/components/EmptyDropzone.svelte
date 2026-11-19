@@ -1,5 +1,6 @@
 <script lang="ts">
   export let onSelectFiles: () => void;
+  export let disabled = false;
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -10,7 +11,7 @@
     <p>
       複数のPDFファイルを読み込んで、ページの並び替え・不要ページの削除・別PDFの差し込み・回転を行えます。
     </p>
-    <button type="button" class="btn btn-primary btn-lg" on:click={onSelectFiles}>
+    <button type="button" class="btn btn-primary btn-lg" on:click={onSelectFiles} {disabled}>
       PDFファイルを選択する
     </button>
     <ul class="shortcut-hints">

@@ -5,7 +5,11 @@
 
 import {get} from 'svelte/store';
 import {beforeEach, describe, expect, it} from 'vitest';
-import {createEditorStore} from './editorStore';
+import {
+  activeSourceEntries,
+  createEditorStore,
+  editorStore,
+} from './editorStore';
 import {getSourceAccentColor, type SourcePDF} from '../types';
 
 const SAMPLE_PDF_A: SourcePDF = {
@@ -222,7 +226,86 @@ describe('editorStore', () => {
     ]);
   });
 
-  it('cleans up anchorPageId, focusPageId, and cutPageIds on deletePages, clearAll, and undo/redo', () => {
+  it('replaces range selection when Shift+Click shrinks or reverses range around anchor', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A, SAMPLE_PDF_B]);
+    const pages = get(store).pages;
+
+    store.selectPage(pages[1].id, 'single');
+    store.selectPage(pages[4].id, 'range');
+    expect(get(store).selectedIds).toEqual([
+      pages[1].id,
+      pages[2].id,
+      pages[3].id,
+      pages[4].id,
+    ]);
+
+    // 範囲を縮小した場合、anchor(1)〜target(2) の範囲に置換されること
+    store.selectPage(pages[2].id, 'range');
+    expect(get(store).selectedIds).toEqual([pages[1].id, pages[2].id]);
+
+    // アンカーより前に移動した場合も同様に置換されること
+    store.selectPage(pages[0].id, 'range');
+    expect(get(store).selectedIds).toEqual([pages[0].id, pages[1].id]);
+  });
+
+  it('synchronizes anchorPageId, focusPageId, and lastSelectedId on addSourcePDFs and movePages', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A]);
+    const firstBatch = get(store).pages;
+    expect(get(store).anchorPageId).toBe(firstBatch[0].id);
+    expect(get(store).focusPageId).toBe(firstBatch[2].id);
+    expect(get(store).lastSelectedId).toBe(firstBatch[2].id);
+
+    // 末尾に別PDFを追加した後、ArrowLeft で追加末尾の一つ前へ移動できること
+    store.addSourcePDFs([SAMPLE_PDF_B]);
+    const allPages = get(store).pages;
+    expect(get(store).anchorPageId).toBe(allPages[3].id);
+    expect(get(store).focusPageId).toBe(allPages[4].id);
+    store.selectAdjacentPage(-1);
+    expect(get(store).selectedIds).toEqual([allPages[3].id]);
+
+    // ページ移動後も focus/anchor/lastSelected が移動先ページに追従すること
+    store.movePages([allPages[0].id, allPages[1].id], 5);
+    expect(get(store).selectedIds).toEqual([allPages[0].id, allPages[1].id]);
+    expect(get(store).anchorPageId).toBe(allPages[0].id);
+    expect(get(store).focusPageId).toBe(allPages[1].id);
+    expect(get(store).lastSelectedId).toBe(allPages[1].id);
+  });
+
+  it('treats same-position pasteCutPages as a no-op without adding history', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A]);
+    const pages = get(store).pages;
+    const historyLengthBefore = get(store).past.length;
+
+    store.selectPage(pages[1].id, 'single');
+    store.cutSelection();
+    store.pasteCutPages();
+
+    const state = get(store);
+    expect(state.pages.map((p) => p.id)).toEqual(pages.map((p) => p.id));
+    expect(state.cutPageIds).toEqual([]);
+    expect(state.past).toHaveLength(historyLengthBefore);
+    expect(state.notice?.type).toBe('info');
+  });
+
+  it('steps preview forward and backward within document bounds', () => {
+    store.addSourcePDFs([SAMPLE_PDF_A]);
+    const pages = get(store).pages;
+
+    store.openPreview(pages[0].id);
+    store.stepPreview(-1);
+    expect(get(store).previewPageId).toBe(pages[0].id);
+
+    store.stepPreview(1);
+    expect(get(store).previewPageId).toBe(pages[1].id);
+
+    store.stepPreview(1);
+    expect(get(store).previewPageId).toBe(pages[2].id);
+
+    store.stepPreview(1);
+    expect(get(store).previewPageId).toBe(pages[2].id);
+  });
+
+  it('cleans up anchorPageId, focusPageId, and cutPageIds on deletePages, undo, redo, and resetAll', () => {
     store.addSourcePDFs([SAMPLE_PDF_A]);
     const pages = get(store).pages;
 
@@ -239,15 +322,56 @@ describe('editorStore', () => {
     expect(get(store).focusPageId).toBeNull();
     expect(get(store).cutPageIds).toEqual([]);
 
-    // Select remaining page 0, cut it, and clearAll
+    // Undo restores page 1 while keeping deleted references sanitized
+    store.undo();
+    expect(get(store).pages).toHaveLength(3);
+
+    // Select remaining page 0, cut it, and resetAll
     const remaining = get(store).pages;
     store.selectPage(remaining[0].id, 'single');
     store.cutSelection();
-    store.clearAll();
+    store.resetAll();
     expect(get(store).pages).toHaveLength(0);
     expect(get(store).anchorPageId).toBeNull();
     expect(get(store).focusPageId).toBeNull();
     expect(get(store).cutPageIds).toEqual([]);
+  });
+
+  it('tracks active page counts per source and avoids re-emitting on notice/selection updates', () => {
+    editorStore.resetForTests();
+    editorStore.addSourcePDFs([SAMPLE_PDF_A, SAMPLE_PDF_B]);
+
+    const emissions: Array<readonly {sourceId: string; activePageCount: number}[]> = [];
+    const unsubscribe = activeSourceEntries.subscribe((entries) => {
+      emissions.push(
+        entries.map((e) => ({sourceId: e.source.id, activePageCount: e.activePageCount})),
+      );
+    });
+
+    expect(emissions).toHaveLength(1);
+    expect(emissions[0]).toEqual([
+      {sourceId: 'src_1', activePageCount: 3},
+      {sourceId: 'src_2', activePageCount: 2},
+    ]);
+
+    // pages / sources が変わらない更新では再発行されないこと
+    editorStore.setNotice({type: 'info', message: 'test'});
+    editorStore.setBusy(true);
+    editorStore.setBusy(false);
+    editorStore.clearSelection();
+    expect(emissions).toHaveLength(1);
+
+    // 1ページ削除すると残存ページ数が更新されること
+    const secondPageId = get(editorStore).pages[1].id;
+    editorStore.deletePages([secondPageId]);
+    expect(emissions).toHaveLength(2);
+    expect(emissions[1]).toEqual([
+      {sourceId: 'src_1', activePageCount: 2},
+      {sourceId: 'src_2', activePageCount: 2},
+    ]);
+
+    unsubscribe();
+    editorStore.resetForTests();
   });
 
   it('resets all state for a new project including history while preserving thumbnailSize', () => {

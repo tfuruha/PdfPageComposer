@@ -1,21 +1,32 @@
 <script lang="ts">
-  import {onDestroy, onMount} from 'svelte';
-  import {renderPageToCanvas} from '../pdf/pdfRenderer';
+  import {onDestroy, tick} from 'svelte';
+  import {cancelCanvasRender, renderPageToCanvas} from '../pdf/pdfRenderer';
   import {editorStore} from '../state/editorStore';
-  import type {PageItem} from '../types';
+  import {getSourceAccentColor, type PageItem} from '../types';
 
-  import {getSourceAccentColor} from '../types';
-
+  let dialogElement: HTMLElement | null = null;
   let canvasElement: HTMLCanvasElement | null = null;
   let zoomPercent = 100;
   let isRendering = false;
   let renderError: string | null = null;
+  let modalRenderSeq = 0;
+  let wasOpen = false;
 
   $: currentIndex = $editorStore.pages.findIndex((p) => p.id === $editorStore.previewPageId);
   $: currentPage = (currentIndex >= 0 ? $editorStore.pages[currentIndex] : null) as PageItem | null;
   $: hasPrev = currentIndex > 0;
   $: hasNext = currentIndex >= 0 && currentIndex < $editorStore.pages.length - 1;
   $: accentColor = currentPage ? getSourceAccentColor(currentPage.sourceId) : '#2563eb';
+
+  $: if (currentPage && !wasOpen) {
+    wasOpen = true;
+    void tick().then(() => {
+      dialogElement?.focus();
+    });
+  } else if (!currentPage && wasOpen) {
+    wasOpen = false;
+    modalRenderSeq += 1;
+  }
 
   $: if (canvasElement && currentPage && zoomPercent) {
     void drawModalPreview(currentPage, zoomPercent);
@@ -25,6 +36,7 @@
     if (!canvasElement) {
       return;
     }
+    const currentSeq = ++modalRenderSeq;
     isRendering = true;
     renderError = null;
     try {
@@ -37,74 +49,33 @@
         targetWidth: baseWidth,
       });
     } catch (err: unknown) {
-      renderError = err instanceof Error ? err.message : 'プレビューの描画に失敗しました';
+      if (currentSeq === modalRenderSeq) {
+        renderError = err instanceof Error ? err.message : 'プレビューの描画に失敗しました';
+      }
     } finally {
-      isRendering = false;
+      if (currentSeq === modalRenderSeq) {
+        isRendering = false;
+      }
     }
   }
 
   function goPrev(): void {
     if (hasPrev) {
-      editorStore.openPreview($editorStore.pages[currentIndex - 1].id);
+      editorStore.stepPreview(-1);
     }
   }
 
   function goNext(): void {
     if (hasNext) {
-      editorStore.openPreview($editorStore.pages[currentIndex + 1].id);
+      editorStore.stepPreview(1);
     }
   }
-
-  function handleWindowKeyDown(event: KeyboardEvent): void {
-    if (!currentPage) {
-      return;
-    }
-
-    const isCtrlOrMeta = event.ctrlKey || event.metaKey;
-
-    if (event.key === 'Escape' || event.key === ' ') {
-      event.preventDefault();
-      editorStore.closePreview();
-      return;
-    }
-
-    if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      goPrev();
-      return;
-    }
-
-    if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      goNext();
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'r' && !isCtrlOrMeta) {
-      event.preventDefault();
-      editorStore.rotatePages([currentPage.id], event.shiftKey ? -90 : 90);
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'l' && !isCtrlOrMeta) {
-      event.preventDefault();
-      editorStore.rotatePages([currentPage.id], -90);
-      return;
-    }
-
-    if (event.key === 'Delete' || event.key === 'Backspace') {
-      event.preventDefault();
-      editorStore.deletePages([currentPage.id]);
-      return;
-    }
-  }
-
-  onMount(() => {
-    window.addEventListener('keydown', handleWindowKeyDown);
-  });
 
   onDestroy(() => {
-    window.removeEventListener('keydown', handleWindowKeyDown);
+    modalRenderSeq += 1;
+    if (canvasElement) {
+      cancelCanvasRender(canvasElement);
+    }
   });
 </script>
 
@@ -112,7 +83,14 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="modal-backdrop" on:click={() => editorStore.closePreview()}>
-    <div class="modal-dialog" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1">
+    <div
+      bind:this={dialogElement}
+      class="modal-dialog"
+      on:click|stopPropagation
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+    >
       <header class="modal-header">
         <div class="modal-title">
           <div class="title-top">
@@ -172,6 +150,7 @@
           <button
             type="button"
             class="btn btn-icon"
+            disabled={$editorStore.isBusy}
             on:click={() => editorStore.rotatePages([currentPage.id], -90)}
             title="左に90度回転 (Shift+R / L)"
           >
@@ -180,6 +159,7 @@
           <button
             type="button"
             class="btn btn-icon"
+            disabled={$editorStore.isBusy}
             on:click={() => editorStore.rotatePages([currentPage.id], 90)}
             title="右に90度回転 (R)"
           >
@@ -188,6 +168,7 @@
           <button
             type="button"
             class="btn btn-danger-outline"
+            disabled={$editorStore.isBusy}
             on:click={() => editorStore.deletePages([currentPage.id])}
             title="このページを削除 (Delete)"
           >

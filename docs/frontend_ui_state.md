@@ -28,7 +28,9 @@ export interface PageItem {
 
 ---
 
-## 3. ストア設計 (`frontend/src/lib/state/editorStore.ts`)
+## 3. ストア設計とモジュール分割 (`frontend/src/lib/state/`)
+
+純粋なページ配列変換・参照整合性サニタイズロジックは `pageOperations.ts` に分離し、`editorStore.ts` はすべてのページ配列変更を共通ヘルパー `commitPageChange()` 経由で適用して不変条件を一元保証する。
 
 ### 3.1 管理する状態 (`EditorState`)
 - `sources: Readonly<Record<string, SourcePDF>>`: 読み込み済みソースPDFのマップ
@@ -48,30 +50,32 @@ export interface PageItem {
 ### 3.2 主要アクション
 1. **`addSourcePDFs(newSources: readonly SourcePDF[], insertIndex?: number)`**:
    - 各 `SourcePDF` の `1..pageCount` から `PageItem` を生成し、`insertIndex` が指定されていればその位置に、未指定なら末尾に挿入する。
-   - 操作前の `pages` を `past` に積み、`future` をクリアする。
+   - 追加された先頭ページを `anchorPageId`、末尾ページを `lastSelectedId` / `focusPageId` に設定し、操作前の `pages` を `past` に積み、`future` をクリアする。
 2. **`selectPage(pageId: string, mode: 'single' | 'toggle' | 'range')`**:
    - `single`: そのページのみを選択（`lastSelectedId = anchorPageId = focusPageId = pageId`）
    - `toggle` (`Ctrl`/`Cmd`+Click): 選択状態を反転（`lastSelectedId = anchorPageId = focusPageId = pageId`）
-   - `range` (`Shift`+Click): `anchorPageId` から `pageId` までの連続範囲を選択
+   - `range` (`Shift`+Click): `Shift+矢印` と同じくエクスプローラー準拠で `anchorPageId` から `pageId` までの連続範囲に選択を置換する（範囲の縮小・反転に対応）
 3. **`selectAdjacentPage(direction: -1 | 1, extend?: boolean)`**:
    - `ArrowLeft` (-1) / `ArrowRight` (1) によるキーボードでのページ選択移動。`extend: true` の場合はアンカーを起点に範囲選択を伸縮する。
 4. **`movePages(pageIdsToMove: readonly string[], targetIndex: number)`**:
-   - ドラッグされたページ（複数選択中のページをドラッグした場合は選択中の全ページを元の相対順序を保ったまま）を `targetIndex` の位置へ移動する。
+   - ドラッグされたページ（複数選択中のページをドラッグした場合は選択中の全ページを元の相対順序を保ったまま）を `targetIndex` の位置へ移動し、`selectedIds` / `anchorPageId` / `lastSelectedId` / `focusPageId` を移動先ページ群に合わせて同期する。
 5. **`cutSelection()` / `pasteCutPages(customTargetIndex?: number)` / `cancelCut()`**:
-   - 選択中ページをカットバッファ（`cutPageIds`）に記録し、貼り付け時に選択位置の直後（または指定インデックス）へ一括移動する。
+   - 選択中ページをカットバッファ（`cutPageIds`）に記録し、貼り付け時に選択位置の直後（または指定インデックス）へ単一のストア更新でアトミックに一括移動する。移動前後で順序が変わらない場合は履歴を積まずカット状態のみ解除する。
 6. **`rotatePages(pageIds: readonly string[], delta: 90 | -90)`**:
    - 対象ページの `rotation` を `((rotation + delta) % 360 + 360) % 360` に更新する。
 7. **`deletePages(pageIds?: readonly string[])`**:
-   - 対象ページを `pages` から除外し、`selectedIds` / `lastSelectedId` / `anchorPageId` / `focusPageId` / `cutPageIds` からも無効なIDを除去する。
+   - 対象ページを `pages` から除外し、`selectedIds` / `lastSelectedId` / `anchorPageId` / `focusPageId` / `cutPageIds` / `previewPageId` を整合させる。
 8. **`reorderPagesBySourceOrder(orderedSourceIds: readonly string[])`**:
    - ワークスペース内の全ページを、指定された `orderedSourceIds` の順序に従ってファイルごとにグループ化して一括再配置する。各ファイル内の相対ページ順および回転角度はそのまま保持され、Undo 履歴に記録される。
-9. **`undo()` / `redo()` / `clearAll()` / `resetAll()`**:
-   - `undo()` / `redo()`: `past` / `future` スタック間で `pages` スナップショットを復元し、選択・アンカー・カット状態も有効なページIDのみに整合させる。
-   - `clearAll()`: ページを全削除して Undo 履歴にスナップショットを積む。
-   - `resetAll()`: ページ、ソース情報、選択状態、カットバッファ、Undo/Redo 履歴を完全初期化し、初期状態（Dropzone）へ戻す（`thumbnailSize` は維持）。
+9. **`undo()` / `redo()` / `resetAll()`**:
+   - `undo()` / `redo()`: `past` / `future` スタック間で `pages` スナップショットを復元し、選択・アンカー・フォーカス・カット・プレビュー状態も有効なページIDのみに自動サニタイズする。
+   - `resetAll()`: ページ、ソース情報、選択状態、カットバッファ、Undo/Redo 履歴を完全初期化し、初期状態（Dropzone）へ戻す（`thumbnailSize` は維持）。新規作成および「すべてクリア」操作はいずれも `resetAll()` へ一本化されている。
+10. **`stepPreview(direction: -1 | 1)`**:
+   - 拡大プレビューモーダル表示中のページを前後へ切り替える。
 
 ### 3.3 派生ストア (Derived Stores)
-- `activeSourceList`: ワークスペース内のページ出現順に従ったユニークな `SourcePDF` の配列
+- `activeSourceEntries`: ワークスペース内のページ出現順に従ったユニークな `{ source: SourcePDF, activePageCount: number }` の配列（`pages` / `sources` 参照不変時は再発行しない）
+- `activeSourceList`: `activeSourceEntries` から抽出した `SourcePDF` の配列
 - `uniqueSourceCount`: 現在ワークスペースに含まれるユニークなファイル数（2件以上でツールバーのファイル順ボタンを有効化）
 - `canUndo` / `canRedo`: Undo / Redo の実行可否フラグ
 - `hasSelection` / `hasCutPages`: 選択中・カット中ページの有無フラグ
@@ -130,7 +134,11 @@ export interface PageItem {
 - 2つの利用シーンをシームレスに処理:
   - **インポート確認モード (`mode === 'import'`)**: 2ファイル以上が同時にドロップまたはダイアログ選択された際、ページ展開前に自動表示。誤って含めたファイルの除外（✕）に対応。
   - **ワークスペース再配置モード (`mode === 'reorder'`)**: ツールバーの「📁 ファイル順」から呼び出し、ワークスペース内のページをファイル単位で一括並び替え（Undo対応）。
+- **モーダル排他と `isBusy` ガード**:
+  - キーボードショートカットは `frontend/src/lib/keyboard/shortcutController.ts` に一元化し、最前面レイヤー（`exportMenu` > `about` > `fileOrder` > `preview` > `workspace`）の1層のみを処理することで、`Space` や `Escape` の背後貫通・即座再オープンを防止する。
+  - `isBusy` 中およびモーダル表示中はファイルドロップ割り込み・編集操作・新規作成を抑止し、`Ctrl+S` / `Ctrl+N` によるブラウザ標準動作のみ抑止する。
 - **並び替え & 一括ソート**:
+  - `reorder` モードでは元ファイル総数ではなくワークスペース上の残存ページ数（`activeSourceEntries` 由来）を表示し、モーダル開放中の一度のみ初期リストを同期して通知操作等によるリセットを防ぐ。
   - 自然順ソート (`localeCompare(..., { numeric: true })`): 「🔤 名前順 (A → Z)」「🔤 名前順 (Z → A)」により、`1.pdf, 2.pdf, 10.pdf` を自然な順序で一発ソート。
   - 手動並び替え: 各行左端のドラッグハンドル（`⋮⋮`）によるドラッグ＆ドロップ、および「▲」「▼」ボタンによる1ステップ上下移動。
   - 「↺ リセット」で初期順序への復元。

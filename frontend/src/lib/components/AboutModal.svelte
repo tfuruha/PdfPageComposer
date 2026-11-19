@@ -1,26 +1,20 @@
 <script lang="ts">
-  import {onDestroy, onMount} from 'svelte';
+  import {tick} from 'svelte';
 
   export let isOpen = false;
   export let onClose: () => void;
 
-  function handleKeyDown(event: KeyboardEvent): void {
-    if (!isOpen) {
-      return;
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      onClose();
-    }
+  let dialogElement: HTMLElement | null = null;
+  let wasOpen = false;
+
+  $: if (isOpen && !wasOpen) {
+    wasOpen = true;
+    void tick().then(() => {
+      dialogElement?.focus();
+    });
+  } else if (!isOpen && wasOpen) {
+    wasOpen = false;
   }
-
-  onMount(() => {
-    window.addEventListener('keydown', handleKeyDown);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('keydown', handleKeyDown);
-  });
 </script>
 
 {#if isOpen}
@@ -30,6 +24,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
+      bind:this={dialogElement}
       class="modal-card"
       role="dialog"
       aria-modal="true"
@@ -45,7 +40,7 @@
       <div class="modal-body">
         <section class="app-info-section">
           <div class="app-name">PdfPageComposer</div>
-          <div class="app-version">Version 1.0.0</div>
+          <div class="app-version">Version 1.0.2</div>
           <div class="app-copy">Copyright © 2026 T.Furuhashi</div>
           <p class="app-desc">
             複数のPDFファイルの結合、ページの削除、並び替え、指定位置への挿入、回転、およびプレビュー確認を行うデスクトップアプリケーションです。

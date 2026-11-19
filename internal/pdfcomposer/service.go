@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +14,33 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
+
+func normalizePathKey(absPath string) string {
+	cleaned := filepath.Clean(absPath)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(cleaned)
+	}
+	return cleaned
+}
+
+func sameFilePath(pathA, pathB string) bool {
+	cleanA := filepath.Clean(pathA)
+	cleanB := filepath.Clean(pathB)
+	if runtime.GOOS == "windows" {
+		if strings.EqualFold(cleanA, cleanB) {
+			return true
+		}
+	} else if cleanA == cleanB {
+		return true
+	}
+
+	infoA, errA := os.Stat(cleanA)
+	infoB, errB := os.Stat(cleanB)
+	if errA == nil && errB == nil {
+		return os.SameFile(infoA, infoB)
+	}
+	return false
+}
 
 // Service manages registered source PDFs and executes page composition operations.
 type Service struct {
@@ -64,10 +92,12 @@ func (s *Service) RegisterFile(filePath string) (SourcePDF, error) {
 		return SourcePDF{}, fmt.Errorf("PDF file %q contains no pages", filepath.Base(absPath))
 	}
 
+	pathKey := normalizePathKey(absPath)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if existingID, ok := s.pathMap[absPath]; ok {
+	if existingID, ok := s.pathMap[pathKey]; ok {
 		updated := SourcePDF{
 			ID:        existingID,
 			FilePath:  absPath,
@@ -88,7 +118,7 @@ func (s *Service) RegisterFile(filePath string) (SourcePDF, error) {
 		PageCount: pageCount,
 	}
 	s.sources[id] = src
-	s.pathMap[absPath] = id
+	s.pathMap[pathKey] = id
 	return src, nil
 }
 
@@ -98,6 +128,7 @@ func (s *Service) RegisterFiles(paths []string) ([]SourcePDF, error) {
 		return nil, nil
 	}
 	result := make([]SourcePDF, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
 	for _, p := range paths {
 		if strings.TrimSpace(p) == "" {
 			continue
@@ -106,6 +137,10 @@ func (s *Service) RegisterFiles(paths []string) ([]SourcePDF, error) {
 		if err != nil {
 			return nil, err
 		}
+		if _, exists := seen[src.ID]; exists {
+			continue
+		}
+		seen[src.ID] = struct{}{}
 		result = append(result, src)
 	}
 	return result, nil
@@ -160,6 +195,11 @@ func (s *Service) Compose(req ExportRequest) error {
 		return errors.New("at least one page is required to export a PDF")
 	}
 
+	absOut, err := filepath.Abs(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve output path %q: %w", outputPath, err)
+	}
+
 	type resolvedPage struct {
 		srcPath    string
 		pageNumber int
@@ -167,26 +207,44 @@ func (s *Service) Compose(req ExportRequest) error {
 	}
 	resolved := make([]resolvedPage, 0, len(req.Pages))
 
-	for i, spec := range req.Pages {
-		src, ok := s.GetSource(spec.SourceID)
-		if !ok {
-			return fmt.Errorf("page %d references unknown source ID %q", i+1, spec.SourceID)
+	// 参照中のソース一覧を一貫して検証し、読み込み中元PDFへの上書き保存を防止する
+	if err := func() error {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+
+		for _, src := range s.sources {
+			if sameFilePath(absOut, src.FilePath) {
+				return fmt.Errorf(
+					"現在読み込み中の元PDF %q には上書き保存できません。別のファイル名で保存してください",
+					src.FileName,
+				)
+			}
 		}
-		if spec.PageNumber < 1 || spec.PageNumber > src.PageCount {
-			return fmt.Errorf(
-				"page %d requests out-of-range page %d from %q (total pages: %d)",
-				i+1, spec.PageNumber, src.FileName, src.PageCount,
-			)
+
+		for i, spec := range req.Pages {
+			src, ok := s.sources[spec.SourceID]
+			if !ok {
+				return fmt.Errorf("page %d references unknown source ID %q", i+1, spec.SourceID)
+			}
+			if spec.PageNumber < 1 || spec.PageNumber > src.PageCount {
+				return fmt.Errorf(
+					"page %d requests out-of-range page %d from %q (total pages: %d)",
+					i+1, spec.PageNumber, src.FileName, src.PageCount,
+				)
+			}
+			rot, err := NormalizeRotation(spec.Rotation)
+			if err != nil {
+				return fmt.Errorf("page %d has invalid rotation: %w", i+1, err)
+			}
+			resolved = append(resolved, resolvedPage{
+				srcPath:    src.FilePath,
+				pageNumber: spec.PageNumber,
+				rotation:   rot,
+			})
 		}
-		rot, err := NormalizeRotation(spec.Rotation)
-		if err != nil {
-			return fmt.Errorf("page %d has invalid rotation: %w", i+1, err)
-		}
-		resolved = append(resolved, resolvedPage{
-			srcPath:    src.FilePath,
-			pageNumber: spec.PageNumber,
-			rotation:   rot,
-		})
+		return nil
+	}(); err != nil {
+		return err
 	}
 
 	tempDir, err := os.MkdirTemp("", "pdfpagecomposer-*")
@@ -222,38 +280,61 @@ func (s *Service) Compose(req ExportRequest) error {
 		}
 	}
 
-	absOut, err := filepath.Abs(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve output path %q: %w", outputPath, err)
-	}
 	if err := os.MkdirAll(filepath.Dir(absOut), 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	if err := copyFile(mergedTempPath, absOut); err != nil {
+	if err := writeFileAtomic(mergedTempPath, absOut); err != nil {
 		return fmt.Errorf("failed to write final PDF to %q: %w", absOut, err)
 	}
 
 	return nil
 }
 
-func copyFile(srcPath, dstPath string) error {
+// writeFileAtomic copies srcPath into a temporary file in dstPath's directory,
+// syncs and closes it, and atomically renames it into place so existing files
+// are never left truncated on I/O failure.
+func writeFileAtomic(srcPath, dstPath string) error {
 	in, err := os.Open(srcPath)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	tmpOut, err := os.CreateTemp(filepath.Dir(dstPath), ".pdfpagecomposer-*.tmp")
 	if err != nil {
 		return err
 	}
+	tmpPath := tmpOut.Name()
+	tmpClosed := false
+	cleanupTemp := true
 	defer func() {
-		_ = out.Close()
+		if !tmpClosed {
+			_ = tmpOut.Close()
+		}
+		if cleanupTemp {
+			_ = os.Remove(tmpPath)
+		}
 	}()
 
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(tmpOut, in); err != nil {
 		return err
 	}
-	return out.Sync()
+	if err := tmpOut.Sync(); err != nil {
+		return err
+	}
+	if err := tmpOut.Close(); err != nil {
+		tmpClosed = true
+		return err
+	}
+	tmpClosed = true
+
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, dstPath); err != nil {
+		return err
+	}
+	cleanupTemp = false
+	return nil
 }

@@ -17,8 +17,8 @@
   export let onExportPDF: () => void;
   export let onExportSelectedPDF: () => void;
   export let onOpenAbout: () => void;
+  export let isExportMenuOpen = false;
 
-  let isExportMenuOpen = false;
   let exportMenuWrapper: HTMLElement | null = null;
 
   $: if ($editorStore.isBusy || $editorStore.pages.length === 0) {
@@ -56,22 +56,12 @@
     }
   }
 
-  function handleWindowKeyDown(event: KeyboardEvent): void {
-    if (isExportMenuOpen && event.key === 'Escape') {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      isExportMenuOpen = false;
-    }
-  }
-
   onMount(() => {
     window.addEventListener('pointerdown', handleWindowPointerDown);
-    window.addEventListener('keydown', handleWindowKeyDown);
   });
 
   onDestroy(() => {
     window.removeEventListener('pointerdown', handleWindowPointerDown);
-    window.removeEventListener('keydown', handleWindowKeyDown);
   });
 </script>
 

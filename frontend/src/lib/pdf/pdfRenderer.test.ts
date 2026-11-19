@@ -3,8 +3,14 @@
  * and in-process WorkerMessageHandler.
  */
 
-import {describe, expect, it, vi} from 'vitest';
-import {clearPDFDocumentCache, getPDFDocument, renderHighResPageRegion} from './pdfRenderer';
+import {afterEach, describe, expect, it, vi} from 'vitest';
+import {
+  clearPDFDocumentCache,
+  getPDFDocument,
+  invalidatePDFSourceCache,
+  renderHighResPageRegion,
+  renderPageToCanvas,
+} from './pdfRenderer';
 
 // Minimal valid 1-page PDF encoded as Base64
 const MINIMAL_PDF_TEXT = `%PDF-1.4
@@ -31,6 +37,88 @@ startxref
 `;
 
 describe('pdfRenderer', () => {
+  afterEach(() => {
+    clearPDFDocumentCache();
+    vi.restoreAllMocks();
+  });
+
+  function setupMockEnvironment(getPdfBase64Mock: (sourceId: string) => Promise<string>) {
+    const createdOffscreenCanvases: Array<{width: number; height: number}> = [];
+
+    const createMockContext = () => {
+      const base: Record<string, unknown> = {
+        canvas: null as unknown,
+        fillStyle: '',
+        fillRect: vi.fn(),
+        drawImage: vi.fn(),
+        save: vi.fn(),
+        restore: vi.fn(),
+        transform: vi.fn(),
+        scale: vi.fn(),
+        translate: vi.fn(),
+        beginPath: vi.fn(),
+        clip: vi.fn(),
+        getTransform: vi.fn().mockReturnValue({a: 1, b: 0, c: 0, d: 1, e: 0, f: 0}),
+        resetTransform: vi.fn(),
+        createImageData: vi.fn().mockReturnValue({data: []}),
+        imageSmoothingEnabled: false,
+        imageSmoothingQuality: 'low',
+      };
+      return new Proxy(base, {
+        get(target, prop) {
+          if (prop in target) {
+            return target[prop as string];
+          }
+          return vi.fn();
+        },
+      });
+    };
+
+    (globalThis as Record<string, unknown>)['window'] = {
+      devicePixelRatio: 1,
+      requestAnimationFrame: (cb: () => void) => setTimeout(cb, 0),
+      cancelAnimationFrame: (id: number) => clearTimeout(id),
+      go: {
+        main: {
+          App: {
+            GetPDFBase64: getPdfBase64Mock,
+          },
+        },
+      },
+    };
+
+    (globalThis as Record<string, unknown>)['document'] = {
+      createElement: (tag: string) => {
+        if (tag === 'canvas') {
+          const ctx = createMockContext();
+          const offscreen = {
+            width: 0,
+            height: 0,
+            getContext: () => ctx,
+          };
+          (ctx as Record<string, unknown>).canvas = offscreen;
+          createdOffscreenCanvases.push(offscreen);
+          return offscreen;
+        }
+        return {};
+      },
+    };
+
+    const createTargetCanvas = (width = 560, height = 400) => {
+      const targetCtx = createMockContext();
+      const targetCanvas = {
+        width,
+        height,
+        style: {width: '', height: ''},
+        getContext: vi.fn().mockReturnValue(targetCtx),
+      } as unknown as HTMLCanvasElement;
+      (targetCtx as Record<string, unknown>).canvas = targetCanvas;
+      return {targetCanvas, targetCtx};
+    };
+
+    return {createdOffscreenCanvases, createTargetCanvas};
+  }
+
   it('loads a PDFDocumentProxy via Wails GetPDFBase64 and in-process pdfjsWorker', async () => {
     const base64Pdf = btoa(MINIMAL_PDF_TEXT);
     (globalThis as Record<string, unknown>)['window'] = {
@@ -232,5 +320,141 @@ startxref
       baseWidth: 1400,
     });
     expect(drawImageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches high-res regions separately by baseWidth and deduplicates concurrent in-flight renders', async () => {
+    const base64Pdf = btoa(MINIMAL_PDF_TEXT);
+    const {createdOffscreenCanvases, createTargetCanvas} = setupMockEnvironment(
+      async () => base64Pdf,
+    );
+    const {targetCanvas: canvasA} = createTargetCanvas();
+    const {targetCanvas: canvasB} = createTargetCanvas();
+    const region = {
+      xPercent: 0.60,
+      yPercent: 0.00,
+      widthPercent: 0.40,
+      heightPercent: 0.28,
+    };
+
+    // 同一パラメータへの同時呼び出しではオフスクリーン生成・描画が1回に集約されること
+    await Promise.all([
+      renderHighResPageRegion({
+        canvas: canvasA,
+        sourceId: 'src_dedup',
+        pageNumber: 1,
+        rotation: 0,
+        region,
+        baseWidth: 1400,
+      }),
+      renderHighResPageRegion({
+        canvas: canvasB,
+        sourceId: 'src_dedup',
+        pageNumber: 1,
+        rotation: 0,
+        region,
+        baseWidth: 1400,
+      }),
+    ]);
+    expect(createdOffscreenCanvases).toHaveLength(1);
+
+    // baseWidth が異なる場合は別キャッシュとして新しくレンダリングされること
+    await renderHighResPageRegion({
+      canvas: canvasA,
+      sourceId: 'src_dedup',
+      pageNumber: 1,
+      rotation: 0,
+      region,
+      baseWidth: 1800,
+    });
+    expect(createdOffscreenCanvases).toHaveLength(2);
+  });
+
+  it('selectively invalidates caches for a specific sourceId without touching others', async () => {
+    const base64Pdf = btoa(MINIMAL_PDF_TEXT);
+    const getPdfMock = vi.fn(async () => base64Pdf);
+    const {createdOffscreenCanvases, createTargetCanvas} = setupMockEnvironment(getPdfMock);
+    const {targetCanvas} = createTargetCanvas();
+    const region = {
+      xPercent: 0.60,
+      yPercent: 0.00,
+      widthPercent: 0.40,
+      heightPercent: 0.28,
+    };
+
+    await renderHighResPageRegion({
+      canvas: targetCanvas,
+      sourceId: 'src_1',
+      pageNumber: 1,
+      rotation: 0,
+      region,
+      baseWidth: 1400,
+    });
+    await renderHighResPageRegion({
+      canvas: targetCanvas,
+      sourceId: 'src_10',
+      pageNumber: 1,
+      rotation: 0,
+      region,
+      baseWidth: 1400,
+    });
+    expect(getPdfMock).toHaveBeenCalledTimes(2);
+    expect(createdOffscreenCanvases).toHaveLength(2);
+
+    // src_1 のみ無効化（src_10 はプレフィックス一致で誤爆しないこと）
+    invalidatePDFSourceCache('src_1');
+    expect(createdOffscreenCanvases[0].width).toBe(0);
+    expect(createdOffscreenCanvases[1].width).toBeGreaterThan(0);
+
+    // src_10 はキャッシュヒットして GetPDFBase64 が呼ばれないこと
+    await renderHighResPageRegion({
+      canvas: targetCanvas,
+      sourceId: 'src_10',
+      pageNumber: 1,
+      rotation: 0,
+      region,
+      baseWidth: 1400,
+    });
+    expect(getPdfMock).toHaveBeenCalledTimes(2);
+
+    // src_1 は再取得・再レンダリングされること
+    await renderHighResPageRegion({
+      canvas: targetCanvas,
+      sourceId: 'src_1',
+      pageNumber: 1,
+      rotation: 0,
+      region,
+      baseWidth: 1400,
+    });
+    expect(getPdfMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('cancels stale renderPageToCanvas requests when rapidly invoked on the same canvas', async () => {
+    const base64Pdf = btoa(MINIMAL_PDF_TEXT);
+    const {createTargetCanvas} = setupMockEnvironment(async () => base64Pdf);
+    const {targetCanvas, targetCtx} = createTargetCanvas(210, 280);
+
+    const drawImageMock = targetCtx.drawImage as ReturnType<typeof vi.fn>;
+
+    // 同一 canvas へ連続して異なる回転角でレンダリングを要求する
+    await Promise.all([
+      renderPageToCanvas({
+        canvas: targetCanvas,
+        sourceId: 'src_rapid',
+        pageNumber: 1,
+        rotation: 0,
+        targetWidth: 210,
+      }),
+      renderPageToCanvas({
+        canvas: targetCanvas,
+        sourceId: 'src_rapid',
+        pageNumber: 1,
+        rotation: 90,
+        targetWidth: 210,
+      }),
+    ]);
+
+    // 最終リクエスト（rotation: 90 で横長サイズ）のみがターゲット canvas へ反映されること
+    expect(drawImageMock).toHaveBeenCalledTimes(1);
+    expect(targetCanvas.width).toBeGreaterThan(targetCanvas.height);
   });
 });

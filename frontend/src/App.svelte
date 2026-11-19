@@ -12,33 +12,75 @@
   import PreviewModal from './lib/components/PreviewModal.svelte';
   import AboutModal from './lib/components/AboutModal.svelte';
   import Toolbar from './lib/components/Toolbar.svelte';
-  import {clearPDFDocumentCache} from './lib/pdf/pdfRenderer';
-  import {activeSourceList, editorStore} from './lib/state/editorStore';
+  import {
+    dispatchKeyboardShortcut,
+    resolveActiveLayer,
+  } from './lib/keyboard/shortcutController';
+  import {clearPDFDocumentCache, invalidatePDFSourceCache} from './lib/pdf/pdfRenderer';
+  import {
+    activeSourceEntries,
+    activeSourceList,
+    canUndo,
+    editorStore,
+    hasCutPages,
+  } from './lib/state/editorStore';
   import type {PageSpec, SourcePDF} from './lib/types';
 
   let unsubscribeFileDrop: (() => void) | null = null;
+  let fileOrderModalRef: FileOrderModal | null = null;
+  let isExportMenuOpen = false;
   let isFileOrderModalOpen = false;
   let isAboutModalOpen = false;
   let fileOrderModalMode: 'import' | 'reorder' = 'import';
   let pendingImportSources: SourcePDF[] = [];
   let pendingImportInsertIndex: number | undefined = undefined;
 
+  $: pageCountBySourceId = Object.fromEntries(
+    $activeSourceEntries.map((entry) => [entry.source.id, entry.activePageCount]),
+  );
+
+  function hasOpenModal(): boolean {
+    return isAboutModalOpen || isFileOrderModalOpen || $editorStore.previewPageId !== null;
+  }
+
+  function deduplicateSources(sources: readonly SourcePDF[]): SourcePDF[] {
+    const seen = new Set<string>();
+    const unique: SourcePDF[] = [];
+    for (const src of sources) {
+      if (!seen.has(src.id)) {
+        seen.add(src.id);
+        unique.push(src);
+      }
+    }
+    return unique;
+  }
+
   function applyIncomingSources(
     sources: SourcePDF[],
     insertIndex: number | undefined,
     singleSuccessMessage: (addedCount: number) => string,
   ): void {
-    if (sources.length === 0) {
+    const uniqueSources = deduplicateSources(sources);
+    if (uniqueSources.length === 0) {
       return;
     }
-    if (sources.length === 1) {
-      const addedCount = editorStore.addSourcePDFs(sources, insertIndex);
+
+    // 同一ソースが再登録された場合は古い PDF.js キャッシュを破棄する
+    for (const src of uniqueSources) {
+      if ($editorStore.sources[src.id]) {
+        invalidatePDFSourceCache(src.id);
+      }
+    }
+
+    if (uniqueSources.length === 1) {
+      const addedCount = editorStore.addSourcePDFs(uniqueSources, insertIndex);
       editorStore.setNotice({
         type: 'info',
         message: singleSuccessMessage(addedCount),
       });
     } else {
-      pendingImportSources = sources;
+      isExportMenuOpen = false;
+      pendingImportSources = uniqueSources;
       pendingImportInsertIndex = insertIndex;
       fileOrderModalMode = 'import';
       isFileOrderModalOpen = true;
@@ -46,6 +88,10 @@
   }
 
   async function handleSelectPDFs(insertIndex?: number): Promise<void> {
+    if ($editorStore.isBusy || isFileOrderModalOpen || isAboutModalOpen) {
+      return;
+    }
+    isExportMenuOpen = false;
     editorStore.setBusy(true);
     editorStore.setNotice(null);
     try {
@@ -66,11 +112,16 @@
   }
 
   function handleOpenFileOrder(): void {
+    if ($editorStore.isBusy) {
+      return;
+    }
+    isExportMenuOpen = false;
     fileOrderModalMode = 'reorder';
     isFileOrderModalOpen = true;
   }
 
   function handleOpenAbout(): void {
+    isExportMenuOpen = false;
     isAboutModalOpen = true;
   }
 
@@ -110,7 +161,10 @@
   }
 
   async function handleNewProject(): Promise<void> {
-    if ($editorStore.pages.length > 0) {
+    if ($editorStore.isBusy) {
+      return;
+    }
+    if ($editorStore.pages.length > 0 || $canUndo) {
       const ok = window.confirm(
         '現在の編集内容をクリアして、新しい作業を開始しますか？\n（未保存の変更内容は破棄されます）',
       );
@@ -119,13 +173,34 @@
       }
     }
 
-    clearPDFDocumentCache();
-    await clearBackendSources();
+    isFileOrderModalOpen = false;
+    isAboutModalOpen = false;
+    isExportMenuOpen = false;
+    pendingImportSources = [];
+    pendingImportInsertIndex = undefined;
+
+    // resetAll() は isBusy を初期値 false へ戻すため、必ず先に実行してから setBusy(true) を設定する
     editorStore.resetAll();
-    editorStore.setNotice({
-      type: 'info',
-      message: '新しい作業を開始しました。PDFファイルをドロップまたは選択してください。',
-    });
+    editorStore.setBusy(true);
+    clearPDFDocumentCache();
+
+    try {
+      await clearBackendSources();
+      editorStore.setNotice({
+        type: 'info',
+        message: '新しい作業を開始しました。PDFファイルをドロップまたは選択してください。',
+      });
+    } catch (err: unknown) {
+      editorStore.setNotice({
+        type: 'error',
+        message:
+          err instanceof Error
+            ? err.message
+            : 'バックエンドのソース情報クリアに失敗しました。',
+      });
+    } finally {
+      editorStore.setBusy(false);
+    }
   }
 
   function handleClearAll(): void {
@@ -180,144 +255,78 @@
   }
 
   function handleGlobalKeyDown(event: KeyboardEvent): void {
-    // Avoid interfering when user is typing in form inputs or dialogs
-    const target = event.target as HTMLElement | null;
-    const isInputFocused =
-      target &&
-      (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.tagName === 'SELECT' ||
-        target.isContentEditable);
-    if (isInputFocused || isFileOrderModalOpen) {
-      return;
-    }
+    const activeLayer = resolveActiveLayer({
+      isExportMenuOpen,
+      isAboutModalOpen,
+      isFileOrderModalOpen,
+      isPreviewModalOpen: $editorStore.previewPageId !== null,
+    });
 
-    const isModalOpen = $editorStore.previewPageId !== null;
-    const isCtrlOrMeta = event.ctrlKey || event.metaKey;
-
-    if (isCtrlOrMeta && event.key.toLowerCase() === 's') {
-      event.preventDefault();
-      if (isModalOpen || isAboutModalOpen || $editorStore.isBusy) {
-        return;
-      }
-      if (event.shiftKey) {
-        if ($editorStore.selectedIds.length > 0) {
+    dispatchKeyboardShortcut(
+      event,
+      {
+        activeLayer,
+        isBusy: $editorStore.isBusy,
+        pageCount: $editorStore.pages.length,
+        selectedCount: $editorStore.selectedIds.length,
+        hasCutPages: $hasCutPages,
+      },
+      {
+        closeExportMenu: () => {
+          isExportMenuOpen = false;
+        },
+        closeAboutModal: () => {
+          isAboutModalOpen = false;
+        },
+        cancelFileOrderModal: handleFileOrderCancel,
+        confirmFileOrderModal: () => {
+          fileOrderModalRef?.confirmCurrentOrder();
+        },
+        closePreview: () => editorStore.closePreview(),
+        previewPrev: () => editorStore.stepPreview(-1),
+        previewNext: () => editorStore.stepPreview(1),
+        undo: () => editorStore.undo(),
+        redo: () => editorStore.redo(),
+        selectAll: () => editorStore.selectAll(),
+        cutSelection: () => editorStore.cutSelection(),
+        pasteCutPages: () => editorStore.pasteCutPages(),
+        cancelCut: () => editorStore.cancelCut(),
+        deletePages: () => editorStore.deletePages(),
+        openPreview: () => {
+          const targetId =
+            $editorStore.focusPageId ??
+            $editorStore.lastSelectedId ??
+            $editorStore.selectedIds[0] ??
+            $editorStore.pages[0]?.id;
+          if (targetId) {
+            editorStore.openPreview(targetId);
+          }
+        },
+        rotateSelection: (delta) => editorStore.rotatePages([], delta),
+        rotatePreviewPage: (delta) => {
+          const previewId = $editorStore.previewPageId;
+          if (previewId) {
+            editorStore.rotatePages([previewId], delta);
+          }
+        },
+        deletePreviewPage: () => {
+          const previewId = $editorStore.previewPageId;
+          if (previewId) {
+            editorStore.deletePages([previewId]);
+          }
+        },
+        selectAdjacent: (direction, extend) => editorStore.selectAdjacentPage(direction, extend),
+        exportAll: () => {
+          void handleExportPDF();
+        },
+        exportSelected: () => {
           void handleExportSelectedPDF();
-        }
-      } else if ($editorStore.pages.length > 0) {
-        void handleExportPDF();
-      }
-      return;
-    }
-
-    if (isCtrlOrMeta && event.key.toLowerCase() === 'n' && !isModalOpen) {
-      event.preventDefault();
-      void handleNewProject();
-      return;
-    }
-
-    if (isCtrlOrMeta && event.key.toLowerCase() === 'z') {
-      event.preventDefault();
-      if (event.shiftKey) {
-        editorStore.redo();
-      } else {
-        editorStore.undo();
-      }
-      return;
-    }
-
-    if (isCtrlOrMeta && event.key.toLowerCase() === 'y') {
-      event.preventDefault();
-      editorStore.redo();
-      return;
-    }
-
-    if (isCtrlOrMeta && event.key.toLowerCase() === 'a' && !isModalOpen) {
-      event.preventDefault();
-      editorStore.selectAll();
-      return;
-    }
-
-    if (isCtrlOrMeta && event.key.toLowerCase() === 'x' && !isModalOpen) {
-      if ($editorStore.selectedIds.length > 0) {
-        event.preventDefault();
-        editorStore.cutSelection();
-      }
-      return;
-    }
-
-    if (isCtrlOrMeta && event.key.toLowerCase() === 'v' && !isModalOpen) {
-      if ($editorStore.cutPageIds.length > 0) {
-        event.preventDefault();
-        editorStore.pasteCutPages();
-      }
-      return;
-    }
-
-    if (event.key === 'Escape' && !isModalOpen) {
-      if ($editorStore.cutPageIds.length > 0) {
-        event.preventDefault();
-        editorStore.cancelCut();
-      }
-      return;
-    }
-
-    if ((event.key === 'Delete' || event.key === 'Backspace') && !isModalOpen) {
-      if ($editorStore.selectedIds.length > 0) {
-        event.preventDefault();
-        editorStore.deletePages();
-      }
-      return;
-    }
-
-    // Modal is open: leave page flipping/closing to PreviewModal
-    if (isModalOpen) {
-      return;
-    }
-
-    // Space: Toggle preview on selected page
-    if (event.key === ' ') {
-      if ($editorStore.pages.length > 0) {
-        event.preventDefault();
-        const targetId =
-          $editorStore.lastSelectedId ??
-          $editorStore.selectedIds[0] ??
-          $editorStore.pages[0].id;
-        editorStore.openPreview(targetId);
-      }
-      return;
-    }
-
-    // R / Shift+R: Rotate right (clockwise) or left (counter-clockwise)
-    if (event.key.toLowerCase() === 'r' && !isCtrlOrMeta) {
-      if ($editorStore.selectedIds.length > 0) {
-        event.preventDefault();
-        editorStore.rotatePages([], event.shiftKey ? -90 : 90);
-      }
-      return;
-    }
-
-    // L: Left rotation alias
-    if (event.key.toLowerCase() === 'l' && !isCtrlOrMeta) {
-      if ($editorStore.selectedIds.length > 0) {
-        event.preventDefault();
-        editorStore.rotatePages([], -90);
-      }
-      return;
-    }
-
-    // Arrow keys: Navigate through page cards
-    if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      editorStore.selectAdjacentPage(-1, event.shiftKey);
-      return;
-    }
-
-    if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      editorStore.selectAdjacentPage(1, event.shiftKey);
-      return;
-    }
+        },
+        newProject: () => {
+          void handleNewProject();
+        },
+      },
+    );
   }
 
   function isExternalFileDrag(event: DragEvent): boolean {
@@ -346,6 +355,13 @@
 
     unsubscribeFileDrop = subscribeToFileDrop(
       (sources: SourcePDF[]) => {
+        if ($editorStore.isBusy || hasOpenModal()) {
+          editorStore.setNotice({
+            type: 'info',
+            message: '現在の処理やダイアログを閉じてからPDFファイルをドロップしてください。',
+          });
+          return;
+        }
         const insertIdx =
           $editorStore.selectedIds.length > 0
             ? editorStore.getSelectionInsertionIndex('after')
@@ -376,6 +392,7 @@
 
 <main class="app-shell">
   <Toolbar
+    bind:isExportMenuOpen
     onNewProject={handleNewProject}
     onInsertPDFBefore={handleInsertBeforeSelection}
     onInsertPDFAfter={handleInsertAfterSelection}
@@ -400,11 +417,16 @@
   {/if}
 
   {#if $editorStore.pages.length === 0}
-    <EmptyDropzone onSelectFiles={() => handleSelectPDFs(undefined)} />
+    <EmptyDropzone onSelectFiles={() => handleSelectPDFs(undefined)} disabled={$editorStore.isBusy} />
   {:else}
     <div class="subbar">
       <div class="subbar-left">
-        <button type="button" class="btn-link" on:click={() => editorStore.selectAll()}>
+        <button
+          type="button"
+          class="btn-link"
+          on:click={() => editorStore.selectAll()}
+          disabled={$editorStore.isBusy}
+        >
           すべて選択
         </button>
         <span class="dot">·</span>
@@ -412,12 +434,17 @@
           type="button"
           class="btn-link"
           on:click={() => editorStore.clearSelection()}
-          disabled={$editorStore.selectedIds.length === 0}
+          disabled={$editorStore.isBusy || $editorStore.selectedIds.length === 0}
         >
           選択解除
         </button>
         <span class="dot">·</span>
-        <button type="button" class="btn-link danger" on:click={handleClearAll}>
+        <button
+          type="button"
+          class="btn-link danger"
+          on:click={handleClearAll}
+          disabled={$editorStore.isBusy}
+        >
           すべてクリア
         </button>
       </div>
@@ -432,9 +459,11 @@
   <PreviewModal />
 
   <FileOrderModal
+    bind:this={fileOrderModalRef}
     isOpen={isFileOrderModalOpen}
     mode={fileOrderModalMode}
     initialSources={fileOrderModalMode === 'import' ? pendingImportSources : $activeSourceList}
+    {pageCountBySourceId}
     onConfirm={handleFileOrderConfirm}
     onCancel={handleFileOrderCancel}
   />

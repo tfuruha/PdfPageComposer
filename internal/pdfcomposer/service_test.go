@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -230,5 +231,155 @@ func TestService_ClearSources(t *testing.T) {
 	}
 	if len(svc.pathMap) != 0 {
 		t.Errorf("expected pathMap to be empty, got %d", len(svc.pathMap))
+	}
+}
+
+func TestCompose_BlocksOverwritingRegisteredSource(t *testing.T) {
+	tempDir := t.TempDir()
+	pdfA := filepath.Join(tempDir, "docA.pdf")
+	writeMinimalPDF(t, pdfA, 2)
+
+	origBytes, err := os.ReadFile(pdfA)
+	if err != nil {
+		t.Fatalf("failed to read original pdfA: %v", err)
+	}
+
+	svc := NewService()
+	src, err := svc.RegisterFile(pdfA)
+	if err != nil {
+		t.Fatalf("RegisterFile failed: %v", err)
+	}
+
+	// 非正規化パス表現で同じ元PDFを指定しても確実にブロックされること
+	nonCanonicalOut := filepath.Join(tempDir, ".", "docA.pdf")
+	err = svc.Compose(ExportRequest{
+		OutputPath: nonCanonicalOut,
+		Pages:      []PageSpec{{SourceID: src.ID, PageNumber: 1, Rotation: 90}},
+	})
+	if err == nil {
+		t.Fatal("expected error when overwriting registered source PDF, got nil")
+	}
+
+	afterBytes, err := os.ReadFile(pdfA)
+	if err != nil {
+		t.Fatalf("failed to re-read pdfA: %v", err)
+	}
+	if !bytes.Equal(origBytes, afterBytes) {
+		t.Fatal("source PDF file was modified despite overwrite protection")
+	}
+}
+
+func TestCompose_AtomicOverwriteExistingNonSourceFile(t *testing.T) {
+	tempDir := t.TempDir()
+	pdfA := filepath.Join(tempDir, "docA.pdf")
+	writeMinimalPDF(t, pdfA, 3)
+
+	outDir := filepath.Join(tempDir, "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	existingOut := filepath.Join(outDir, "result.pdf")
+	if err := os.WriteFile(existingOut, []byte("old-dummy-content"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	svc := NewService()
+	src, err := svc.RegisterFile(pdfA)
+	if err != nil {
+		t.Fatalf("RegisterFile failed: %v", err)
+	}
+
+	if err := svc.Compose(ExportRequest{
+		OutputPath: existingOut,
+		Pages: []PageSpec{
+			{SourceID: src.ID, PageNumber: 2, Rotation: 0},
+			{SourceID: src.ID, PageNumber: 1, Rotation: 90},
+		},
+	}); err != nil {
+		t.Fatalf("Compose atomic overwrite failed: %v", err)
+	}
+
+	outCount, err := api.PageCountFile(existingOut)
+	if err != nil {
+		t.Fatalf("PageCountFile failed: %v", err)
+	}
+	if outCount != 2 {
+		t.Errorf("expected 2 pages in overwritten output, got %d", outCount)
+	}
+
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "result.pdf" {
+		t.Errorf("expected only result.pdf in output dir without leftover temp files, got %v", entries)
+	}
+}
+
+func TestRegisterFiles_DeduplicatesSamePath(t *testing.T) {
+	tempDir := t.TempDir()
+	pdfA := filepath.Join(tempDir, "docA.pdf")
+	pdfB := filepath.Join(tempDir, "docB.pdf")
+	writeMinimalPDF(t, pdfA, 1)
+	writeMinimalPDF(t, pdfB, 2)
+
+	svc := NewService()
+	sources, err := svc.RegisterFiles([]string{
+		pdfA,
+		pdfB,
+		filepath.Join(tempDir, ".", "docA.pdf"),
+		"   ",
+	})
+	if err != nil {
+		t.Fatalf("RegisterFiles failed: %v", err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 deduplicated sources, got %d", len(sources))
+	}
+	if sources[0].FileName != "docA.pdf" || sources[1].FileName != "docB.pdf" {
+		t.Errorf("unexpected sources order/names: %+v", sources)
+	}
+}
+
+func TestService_ConcurrentOperations(t *testing.T) {
+	tempDir := t.TempDir()
+	pdfA := filepath.Join(tempDir, "docA.pdf")
+	writeMinimalPDF(t, pdfA, 2)
+
+	svc := NewService()
+	src, err := svc.RegisterFile(pdfA)
+	if err != nil {
+		t.Fatalf("RegisterFile failed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			if _, err := svc.RegisterFile(pdfA); err != nil {
+				errs <- err
+				return
+			}
+			if _, ok := svc.GetSource(src.ID); !ok {
+				errs <- fmt.Errorf("missing source %q in goroutine %d", src.ID, idx)
+				return
+			}
+			outPath := filepath.Join(tempDir, fmt.Sprintf("concurrent_%d.pdf", idx))
+			if err := svc.Compose(ExportRequest{
+				OutputPath: outPath,
+				Pages:      []PageSpec{{SourceID: src.ID, PageNumber: 1}},
+			}); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent operation error: %v", err)
 	}
 }

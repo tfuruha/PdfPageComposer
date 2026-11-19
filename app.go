@@ -33,6 +33,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// Listen for native file drops anywhere in the window and emit an event to the frontend.
 	runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
+		if len(paths) == 0 {
+			return
+		}
 		var pdfPaths []string
 		for _, p := range paths {
 			if strings.EqualFold(filepath.Ext(p), ".pdf") {
@@ -40,6 +43,7 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 		if len(pdfPaths) == 0 {
+			runtime.EventsEmit(ctx, "pdf:drop-error", "PDFファイル（.pdf）のみ読み込むことができます")
 			return
 		}
 		sources, err := a.service.RegisterFiles(pdfPaths)
@@ -137,6 +141,10 @@ func (a *App) localPDFMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const prefix = "/local-pdf/"
 		if strings.HasPrefix(r.URL.Path, prefix) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
 			sourceID := strings.TrimPrefix(r.URL.Path, prefix)
 			sourceID = strings.TrimSpace(sourceID)
 			src, ok := a.service.GetSource(sourceID)
