@@ -40,7 +40,7 @@
       <div class="modal-body">
         <section class="app-info-section">
           <div class="app-name">PdfPageComposer</div>
-          <div class="app-version">Version 1.0.2</div>
+          <div class="app-version">Version 1.0.4</div>
           <div class="app-copy">Copyright © 2026 T.Furuhashi</div>
           <p class="app-desc">
             複数のPDFファイルの結合、ページの削除、並び替え、指定位置への挿入、回転、およびプレビュー確認を行うデスクトップアプリケーションです。
