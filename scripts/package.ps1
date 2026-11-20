@@ -1,12 +1,12 @@
-# ==============================================================================
+﻿# ==============================================================================
 # PdfPageComposer 配布用パッケージングスクリプト (PowerShell)
-# 実行ファイルとユーザー説明書を同梱した Zip アーカイブを dist/ フォルダに生成します。
+# インストーラファイルとユーザー説明書を同梱した Zip アーカイブを dist/ フォルダに生成します。
 # ==============================================================================
 
 [CmdletBinding()]
 param(
     [switch]$BuildIfNeeded = $true,
-    [string]$Version = "1.0.4"
+    [string]$Version = "1.0.5"
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,7 +23,7 @@ Write-Host " プロジェクトルート: $ProjectRoot" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 # パス定義
-$ExePath = Join-Path $ProjectRoot "build\bin\PdfPageComposer.exe"
+$InstallerPath = Join-Path $ProjectRoot "build\bin\PdfPageComposer-amd64-installer.exe"
 $ManualPath = Join-Path $ProjectRoot "docs\user_manual.md"
 $LicensePath = Join-Path $ProjectRoot "LICENSE"
 $NoticePath = Join-Path $ProjectRoot "NOTICE"
@@ -32,24 +32,24 @@ $ZipName = "PdfPageComposer-windows-amd64-v$Version.zip"
 $ZipPath = Join-Path $DistDir $ZipName
 $TempDir = Join-Path $ProjectRoot "dist\temp_package"
 
-# 1. 実行ファイルの存在確認・必要に応じたビルド
-if (-not (Test-Path $ExePath)) {
+# 1. インストーラファイルの存在確認・必要に応じたビルド
+if (-not (Test-Path $InstallerPath)) {
     if ($BuildIfNeeded) {
-        Write-Host "`n[1/4] 実行ファイルが見つからないため、Windows本番バイナリをビルドします..." -ForegroundColor Yellow
-        $buildCmd = 'go build -tags desktop,production -ldflags "-w -s -H windowsgui" -o build/bin/PdfPageComposer.exe .'
+        Write-Host "`n[1/4] インストーラファイルが見つからないため、Windowsインストーラをビルドします..." -ForegroundColor Yellow
+        $buildCmd = 'wails build -platform windows/amd64 -nsis'
         Write-Host "実行: $buildCmd" -ForegroundColor Gray
         Invoke-Expression $buildCmd
-        if (-not (Test-Path $ExePath)) {
-            Write-Error "ビルドに失敗しました。$ExePath が生成されていません。"
+        if (-not (Test-Path $InstallerPath)) {
+            Write-Error "ビルドに失敗しました。$InstallerPath が生成されていません。"
             exit 1
         }
-        Write-Host "ビルド成功: $ExePath" -ForegroundColor Green
+        Write-Host "ビルド成功: $InstallerPath" -ForegroundColor Green
     } else {
-        Write-Error "実行ファイルが見つかりません: $ExePath`n先にビルドを行うか、-BuildIfNeeded スイッチを有効にしてください。"
+        Write-Error "インストーラファイルが見つかりません: $InstallerPath`n先にビルドを行うか、-BuildIfNeeded スイッチを有効にしてください。"
         exit 1
     }
 } else {
-    Write-Host "`n[1/4] 実行ファイルを確認しました: $ExePath" -ForegroundColor Green
+    Write-Host "`n[1/4] インストーラファイルを確認しました: $InstallerPath" -ForegroundColor Green
 }
 
 # 2. 説明書の存在確認
@@ -72,7 +72,7 @@ if (-not (Test-Path $DistDir)) {
 $PackageContentDir = Join-Path $TempDir "PdfPageComposer"
 
 # ファイルの配置
-Copy-Item $ExePath -Destination (Join-Path $PackageContentDir "PdfPageComposer.exe")
+Copy-Item $InstallerPath -Destination (Join-Path $PackageContentDir "PdfPageComposer-amd64-installer.exe")
 # 配布先で一目で分かるよう「説明書.md」および「README.md」として配置
 Copy-Item $ManualPath -Destination (Join-Path $PackageContentDir "説明書.md")
 Copy-Item $ManualPath -Destination (Join-Path $PackageContentDir "README.md")
@@ -104,7 +104,7 @@ Write-Host " パッケージ作成が正常に完了しました！" -Foreground
 Write-Host " 出力ファイル: $($ZipItem.FullName)" -ForegroundColor White
 Write-Host " ファイルサイズ: $ZipSizeMB MB ($($ZipItem.Length) bytes)" -ForegroundColor White
 Write-Host " 同梱内容:" -ForegroundColor White
-Write-Host "   - PdfPageComposer.exe (Windows 64bit 実行ファイル)" -ForegroundColor Gray
+Write-Host "   - PdfPageComposer-amd64-installer.exe (Windows インストーラ)" -ForegroundColor Gray
 Write-Host "   - 説明書.md (ユーザー向け操作マニュアル)" -ForegroundColor Gray
 Write-Host "   - README.md (同上)" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Green

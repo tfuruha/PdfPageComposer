@@ -1,5 +1,6 @@
 # Wails / Go build outputs
 build/bin/
+build/windows/installer/tmp/
 dist/
 *.exe
 *.out
