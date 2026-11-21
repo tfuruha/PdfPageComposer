@@ -99,6 +99,21 @@ go build -tags desktop,production,webkit2_41 -o build/bin/PdfPageComposer .
 
 # Windows 向けバイナリビルド (クロスコンパイルまたは Windows 環境)
 GOOS=windows GOARCH=amd64 go build -tags desktop,production -ldflags "-w -s -H windowsgui" -o build/bin/PdfPageComposer.exe .
+
+# Windows 向け NSIS インストーラのビルド (要 NSIS / makensis)
+wails build -platform windows/amd64 -nsis
+```
+
+### 配布パッケージの作成 (Windows)
+
+インストーラ（`build/bin/PdfPageComposer-amd64-installer.exe`）と利用説明書（`docs/user_manual.md`）をまとめた配布用 Zip アーカイブを `dist/` に生成できます。
+
+```powershell
+# PowerShell から実行（必要に応じてインストーラも自動ビルド）
+.\scripts\package.ps1
+
+# またはバッチファイルから実行
+.\package.bat
 ```
 
 ---
